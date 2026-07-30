@@ -1,0 +1,3 @@
+[workspace]
+members = ["money_core", "cli"]
+resolver = "2"
