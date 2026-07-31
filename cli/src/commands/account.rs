@@ -116,14 +116,23 @@ fn add(args: AddArgs) -> Result<()> {
         AccountKind::Emergency => NewAccount::emergency(&name),
         AccountKind::Target => {
             let target = match args.target {
-                Some(t) => t,
-                None if mode.allows_prompt() => helpers::map_dlg_err(
-                    Input::new().with_prompt("Target amount ($)").interact_text(),
-                )?,
-                None => {
-                    eprintln!("--target is required for a target account");
-                    return Ok(());
+                Some(t) => Some(t),
+                None if mode.allows_prompt() => {
+                    let t: String = helpers::map_dlg_err(
+                        Input::new()
+                            .with_prompt("Target amount (optional, blank for none)")
+                            .allow_empty(true)
+                            .interact_text(),
+                    )?;
+                    if t.is_empty() {
+                        None
+                    } else {
+                        Some(t.parse().map_err(|_| {
+                            money_core::AppError::Invalid("Invalid target amount".into())
+                        })?)
+                    }
                 }
+                None => None,
             };
             NewAccount::target(&name, target)?
         }

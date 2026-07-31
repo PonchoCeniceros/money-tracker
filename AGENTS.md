@@ -102,7 +102,9 @@ there is no month-scoped "flujo" number, only a query with no date filter.
 
 Key rules baked into the schema, not just convention:
 - At most one active `emergency` account (partial unique index on `kind='emergency' AND archived=0`).
-- A `target` account requires `target_amount`; only `target` accounts may have one (CHECK).
+- Only `target` accounts may have a `target_amount` (CHECK) — but it's optional even there, for an
+  open-ended accumulation bucket (e.g. "Patrimonio") with no specific goal. `AccountBalance::progress_pct()`
+  returns `None` when it's unset, and every caller (CLI, GUI) already renders that as "—".
 - `kind='transfer'` is the only path that can move money between two accounts without touching
   income/expense totals — this is what lets a credit-card payment, a bucket withdrawal, or an ATM
   cash-envelope withdrawal happen without being double-counted as spending.

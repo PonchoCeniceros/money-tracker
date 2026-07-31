@@ -66,9 +66,8 @@ export default function Accounts() {
                   <Money amount={a.balance} />
                 </td>
                 <td>
-                  {a.kind === "target" && a.target_amount != null && (
-                    <Money amount={a.target_amount} />
-                  )}
+                  {a.kind === "target" &&
+                    (a.target_amount != null ? <Money amount={a.target_amount} /> : "—")}
                   {a.kind === "credit" && a.credit_limit != null && (
                     <Money amount={a.credit_limit} />
                   )}
@@ -157,7 +156,7 @@ function CreateAccountForm({ onDone }: { onDone: () => void }) {
       await accountsApi.create({
         name,
         kind,
-        target_amount: kind === "target" ? Number(target) : null,
+        target_amount: kind === "target" && target ? Number(target) : null,
         credit_limit: kind === "credit" && limit ? Number(limit) : null,
         restricted,
       });
@@ -190,7 +189,7 @@ function CreateAccountForm({ onDone }: { onDone: () => void }) {
           </select>
         </Field>
         {kind === "target" && (
-          <Field label="Meta ($)">
+          <Field label="Meta (opcional, en blanco para acumular sin tope)">
             <input
               className={ui.input}
               type="number"
@@ -198,7 +197,6 @@ function CreateAccountForm({ onDone }: { onDone: () => void }) {
               min="0"
               value={target}
               onChange={(e) => setTarget(e.target.value)}
-              required
             />
           </Field>
         )}

@@ -105,7 +105,7 @@ fn op_c_bucket_deposit_is_not_an_expense() {
     let conn = fresh_db();
     let debito = account_service::create_account(&conn, &NewAccount::spending("debito")).unwrap();
     let vacaciones =
-        account_service::create_account(&conn, &NewAccount::target("Vacaciones", 50000.0).unwrap()).unwrap();
+        account_service::create_account(&conn, &NewAccount::target("Vacaciones", Some(50000.0)).unwrap()).unwrap();
     entry_service::add_income(&conn, "2026-08-01", 5000.0, debito, "Nomina", None).unwrap();
 
     entry_service::add_transfer(&conn, "2026-08-02", 2000.0, debito, vacaciones, None).unwrap();

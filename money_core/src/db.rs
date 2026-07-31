@@ -93,7 +93,6 @@ fn create_schema(conn: &Connection) -> Result<()> {
             created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
 
             CHECK (kind =  'target' OR target_amount IS NULL),
-            CHECK (kind <> 'target' OR target_amount IS NOT NULL),
             CHECK (kind =  'credit' OR credit_limit  IS NULL)
         );
 
@@ -252,11 +251,26 @@ mod tests {
     }
 
     #[test]
-    fn target_account_requires_target_amount() {
+    fn target_account_allows_open_ended_bucket() {
+        // A target-kind bucket without a goal amount ("Patrimonio"-style,
+        // accumulate with no specific number in mind) is valid — only
+        // `target_amount IS NOT NULL` used to be required; that CHECK was
+        // deliberately removed. A non-target account still can't carry one
+        // (see `spending_account_rejects_target_amount` below).
+        let conn = open_memory();
+        conn.execute(
+            "INSERT INTO accounts (name, kind) VALUES ('patrimonio', 'target')",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn spending_account_rejects_target_amount() {
         let conn = open_memory();
         let err = conn
             .execute(
-                "INSERT INTO accounts (name, kind) VALUES ('vacaciones', 'target')",
+                "INSERT INTO accounts (name, kind, target_amount) VALUES ('debito', 'spending', 100.0)",
                 [],
             )
             .unwrap_err();

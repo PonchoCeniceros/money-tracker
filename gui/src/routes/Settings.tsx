@@ -43,7 +43,16 @@ export default function Settings() {
             configKey="emergency_pct"
             currentValue={config.data}
           />
+          <ConfigNumber
+            label="Gasto mensual histórico de referencia ($, opcional)"
+            configKey="baseline_monthly_expense"
+            currentValue={config.data}
+          />
         </div>
+        <p className={ui.muted} style={{ marginTop: 8, fontSize: 12 }}>
+          El gasto histórico solo se usa en "Meses de colchón" del Dashboard mientras no haya
+          ningún mes real registrado en la app — en cuanto exista uno, se ignora por completo.
+        </p>
       </div>
 
       <ErrorBanner message={concepts.error} />

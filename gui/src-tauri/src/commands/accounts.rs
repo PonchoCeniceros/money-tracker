@@ -28,9 +28,7 @@ pub fn create_account(state: State<AppState>, input: NewAccountInput) -> ApiResu
     let new_account = match kind {
         AccountKind::Spending => NewAccount::spending(&input.name),
         AccountKind::Emergency => NewAccount::emergency(&input.name),
-        AccountKind::Target => {
-            NewAccount::target(&input.name, input.target_amount.unwrap_or(0.0))?
-        }
+        AccountKind::Target => NewAccount::target(&input.name, input.target_amount)?,
         AccountKind::Credit => NewAccount::credit(&input.name, input.credit_limit),
     };
     let new_account = if input.restricted {

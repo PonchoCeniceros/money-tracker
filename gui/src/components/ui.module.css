@@ -2,8 +2,9 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 20px;
+  padding: 20px 24px;
   margin-bottom: 16px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .grid {
@@ -22,41 +23,69 @@
 .stat {
   display: flex;
   justify-content: space-between;
-  padding: 4px 0;
+  align-items: baseline;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.stat:last-child {
+  border-bottom: none;
 }
 
 .statLabel {
   color: var(--text-muted);
+  font-size: 13px;
 }
 
 .statValue {
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 15px;
 }
 
 .table th,
 .table td {
   text-align: left;
-  padding: 6px 10px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   font-variant-numeric: tabular-nums;
 }
 
 .table th {
   color: var(--text-muted);
-  font-weight: 500;
-  font-size: 12px;
+  font-weight: 600;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.05em;
+}
+
+.table tr:hover td {
+  background: rgba(0, 0, 0, 0.025);
+}
+
+.button,
+.buttonSecondary,
+.buttonDanger {
+  height: var(--control-h);
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  padding: 0 20px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .button {
   background: var(--accent);
   color: var(--accent-contrast);
   border: none;
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-weight: 600;
+  transition: box-shadow 0.15s ease;
+}
+
+.button:hover:not(:disabled) {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .button:disabled {
@@ -68,26 +97,39 @@
   background: transparent;
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 14px;
+  font-weight: 600;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.buttonSecondary:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .buttonDanger {
   background: transparent;
   color: var(--danger);
   border: 1px solid var(--danger);
-  border-radius: 6px;
-  padding: 6px 10px;
+  padding: 0 16px;
   font-size: 12px;
+  font-weight: 600;
 }
 
 .input {
+  height: var(--control-h);
+  box-sizing: border-box;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: var(--surface);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: var(--surface-2);
   color: var(--text);
   min-width: 0;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .field {
@@ -98,16 +140,18 @@
 }
 
 .fieldLabel {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .error {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
   border: 1px solid var(--danger);
-  border-radius: 6px;
-  padding: 8px 12px;
+  border-radius: var(--radius);
+  padding: 10px 14px;
   margin-bottom: 12px;
 }
 
@@ -115,8 +159,8 @@
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   border: 1px solid var(--warn);
-  border-radius: 6px;
-  padding: 8px 12px;
+  border-radius: var(--radius);
+  padding: 10px 14px;
   margin-bottom: 12px;
 }
 
@@ -127,10 +171,13 @@
 .badge {
   display: inline-block;
   font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--border);
-  color: var(--text-muted);
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--series-1) 14%, transparent);
+  color: var(--series-1);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .tabs {
@@ -156,14 +203,23 @@
 }
 
 .progressTrack {
-  background: var(--border);
-  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
   height: 6px;
   width: 100%;
   overflow: hidden;
 }
 
 .progressFill {
-  background: var(--accent);
+  background: var(--gradient-accent);
   height: 100%;
+}
+
+.gradientText {
+  background: var(--gradient-accent);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 800;
 }
