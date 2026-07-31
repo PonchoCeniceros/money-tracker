@@ -1,4 +1,4 @@
-use clap::{Args, Subcommand};
+use clap::{ArgAction, Args, Subcommand};
 use dialoguer::Confirm;
 use money_core::db as core_db;
 use money_core::services::account_service;
@@ -23,7 +23,13 @@ enum DbCommands {
 #[derive(Args)]
 pub struct ResetArgs {
     /// Keep the old file instead of discarding it (recommended)
-    #[arg(long, default_value_t = true)]
+    #[arg(
+        long,
+        action = ArgAction::Set,
+        num_args = 0..=1,
+        default_value_t = true,
+        default_missing_value = "true"
+    )]
     backup: bool,
     #[arg(long)]
     yes: bool,

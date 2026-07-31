@@ -135,6 +135,99 @@ money-tracker report -p 2026-08 --detail
 money-tracker account list
 ```
 
+### Escenarios de uso
+
+Flujo típico de un mes, en las propias palabras con las que se pensó:
+
+> 1. yo recibo mi ingreso, se separa su porcentaje al fondo de emergencia
+> 2. si tengo algún bucket, le destino parte de mi ingreso a discreción
+> 3. voy a ir al cajero a hacer un retiro de efectivo para mi sobre
+> 4. uso la tarjeta de débito y/o la de vales para los gastos
+> 5. por lo general, los gastos en efectivo serán discrecionales, pero puede que no siempre, lo más
+>    seguro pueda ser que en el establecimiento de la gasolina u otro lugar no acepten tarjeta o
+>    salió alguna reparación imprevista ej se ponchó una llanta
+> 6. si la junté lana para lo que tenía destinado cierto bucket, hago un retiro del bucket y lo
+>    gasto (ej juntaba para unos tenis y voy y los compro; juntaba para la reparación del carro y
+>    voy y retiro en efectivo para realizar el pago)
+> 7. si surge una emergencia aplico el punto anterior pero para el fondo de emergencia
+> 8. de mi remanente hago una "aportación voluntaria" a mi fondo de emergencia para "reponerlo"
+
+Comando por comando:
+
+**1. Ingreso con reparto automático al fondo de emergencia**
+
+```sh
+money-tracker income 20000 Nomina
+```
+
+Si `income_account` (default `debito`) es líquida y existe un `Fondo de emergencia`, la app aparta
+sola el `emergency_pct`% — no hay paso manual.
+
+**2. Destinar parte del ingreso a un bucket**
+
+```sh
+money-tracker account add Tenis --kind target --target 2000   # una sola vez
+money-tracker bucket deposit -b Tenis -a 500 --from debito
+```
+
+Es una transferencia: no mueve "Gasto del mes".
+
+**3. Retiro de cajero para el sobre de efectivo**
+
+```sh
+money-tracker transfer -a 1000 --from debito --to efectivo
+```
+
+**4. Gastos con débito/vales — se registran al momento**
+
+```sh
+money-tracker add 350 Alimentos --from debito
+money-tracker add 250 Alimentos --from vales
+```
+
+**5. Gasto en efectivo que sí puedes identificar (no siempre es discrecional)**
+
+Si sabes en el momento que fue gasolina o una reparación, regístralo con su concepto real — no
+esperes al cuadre de fin de mes:
+
+```sh
+money-tracker add 450 Extraordinario --from efectivo -d "llanta ponchada"
+```
+
+Solo lo que de verdad no puedas rastrear cae en `account reconcile efectivo --actual N` al cierre
+del mes, y ese sobrante cae por default en `Discrecional` (tu `cash_concept`).
+
+**6. Bucket completo → retiro y gasto**
+
+Compra directa (tenis), sin pasar por efectivo:
+
+```sh
+money-tracker add 2000 Discrecional --from Tenis -d "tenis nuevos"
+```
+
+Reparación que necesitas pagar en efectivo — retiro y gasto son dos hechos distintos:
+
+```sh
+money-tracker bucket withdraw -b "Fondo Auto" -a 2500 --to efectivo
+money-tracker add 2500 Extraordinario --from efectivo -d "pago reparación del carro"
+```
+
+**7. Emergencia real — mismo patrón que el 6, con el fondo de emergencia**
+
+```sh
+money-tracker bucket withdraw -b "Fondo de emergencia" -a 3000 --to debito
+money-tracker add 3000 Extraordinario --from debito -d "gasto médico imprevisto"
+```
+
+**8. Aportación voluntaria para reponer el fondo**
+
+```sh
+money-tracker bucket deposit -b "Fondo de emergencia" -a 1500 --from debito
+```
+
+Es un depósito manual, no pasa por `income` — no vuelve a dispararse ningún % automático sobre
+dinero que ya era tuyo.
+
 ### Salida del reporte
 
 ```
@@ -199,6 +292,33 @@ Dashboard_Financiero.xlsx / .ods  # dashboard legado, solo consulta — ya no se
 - Se crea automáticamente al ejecutar cualquier comando
 - Una base de datos con el esquema anterior (`transactions`/`buckets`) se rechaza con un mensaje
   accionable — no hay migración automática. Ver `money-tracker db status` y `db reset --backup`.
+
+### Backup
+
+`db reset` no hace un backup "en paralelo" — mueve el archivo actual a un lado y el próximo comando
+crea uno nuevo vacío. Para respaldar sin perder la base activa, copia el archivo mientras no haya un
+comando escribiendo en él:
+
+```sh
+cp ~/.money-tracker/data.db ~/.money-tracker/data.db.bak-$(date +%Y%m%d)
+```
+
+### Borrar / reiniciar la base de datos
+
+```sh
+# Ver ruta, versión de esquema, cuentas y movimientos
+money-tracker db status
+
+# Mover la base actual a un lado (data.db.backup-YYYYMMDDHHMMSS) y empezar limpio
+# pide confirmación salvo que pases --yes
+money-tracker db reset
+
+# Lo mismo, sin preguntar
+money-tracker db reset --yes
+
+# Borrar la base actual sin dejar respaldo (irreversible)
+money-tracker db reset --backup=false --yes
+```
 
 ## Arquitectura
 
