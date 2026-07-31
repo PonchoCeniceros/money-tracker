@@ -335,6 +335,8 @@ Segundo manejador sobre el mismo `money_core`, con paridad completa de operacion
 registrar gasto/ingreso/transferencia, cuentas y buckets, cuadre de efectivo, presupuestos,
 movimientos, ajustes, y el wizard de arranque si la base está vacía).
 
+![Dashboard de money-tracker](docs/screenshot-dashboard.png)
+
 ```sh
 cd gui
 pnpm install

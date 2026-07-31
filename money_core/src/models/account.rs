@@ -74,14 +74,19 @@ impl NewAccount {
         }
     }
 
-    pub fn target(name: &str, target_amount: f64) -> Result<NewAccount> {
-        if target_amount <= 0.0 {
-            return Err(AppError::Invalid("Target amount must be positive".into()));
+    /// `target_amount` is optional — a bucket like "Patrimonio" can
+    /// accumulate with no specific goal in mind. When given, it must be
+    /// positive.
+    pub fn target(name: &str, target_amount: Option<f64>) -> Result<NewAccount> {
+        if let Some(t) = target_amount {
+            if t <= 0.0 {
+                return Err(AppError::Invalid("Target amount must be positive".into()));
+            }
         }
         Ok(NewAccount {
             name: name.to_string(),
             kind: AccountKind::Target,
-            target_amount: Some(target_amount),
+            target_amount,
             credit_limit: None,
             liquid: true,
         })

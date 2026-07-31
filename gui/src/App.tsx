@@ -9,6 +9,7 @@ import Budgets from "./routes/Budgets";
 import Settings from "./routes/Settings";
 import SetupWizard from "./routes/SetupWizard";
 import styles from "./App.module.css";
+import ui from "./components/ui.module.css";
 
 type View = "dashboard" | "register" | "accounts" | "movements" | "budgets" | "settings";
 
@@ -24,7 +25,14 @@ const TABS: { id: View; label: string }[] = [
 function App() {
   useRefetchOnFocus();
   const [view, setView] = useState<View>("dashboard");
+  const [spinning, setSpinning] = useState(false);
   const accounts = useApi(() => accountsApi.list(false));
+
+  function refresh() {
+    bumpRevision();
+    setSpinning(true);
+    setTimeout(() => setSpinning(false), 500);
+  }
 
   // No accounts yet: this is a fresh database. Gate the whole app behind
   // the setup wizard rather than showing an empty dashboard everywhere.
@@ -53,6 +61,14 @@ function App() {
             </button>
           ))}
         </div>
+        <button
+          className={ui.buttonSecondary}
+          style={{ marginLeft: "auto" }}
+          onClick={refresh}
+          title="Volver a cargar los datos"
+        >
+          <span className={spinning ? styles.spin : undefined}>↻</span> Actualizar
+        </button>
       </nav>
       <main className={styles.main}>
         {view === "dashboard" && <Dashboard />}
