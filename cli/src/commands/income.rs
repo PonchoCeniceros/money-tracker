@@ -1,48 +1,69 @@
 use clap::Args;
 use dialoguer::{Confirm, FuzzySelect, Input};
 use money_core::db::open_db;
-use money_core::models::Transaction;
-use money_core::services::{bucket_service, transaction_service};
+use money_core::services::{account_service, entry_service};
 use money_core::Result;
 
-use crate::commands::helpers;
+use crate::commands::helpers::{self, PromptMode};
 
 #[derive(Args)]
 pub struct IncomeArgs {
-    #[arg(short = 'a', long)]
     amount: Option<f64>,
-    #[arg(short = 'c', long)]
     concept: Option<String>,
+    #[arg(short = 't', long)]
+    to: Option<String>,
     #[arg(short = 'd', long)]
     description: Option<String>,
-    #[arg(short = 'm', long)]
-    month: Option<i32>,
-    #[arg(short = 'y', long)]
-    year: Option<i32>,
+    #[arg(short = 'D', long)]
+    date: Option<String>,
+    #[arg(short = 'i', long)]
+    interactive: bool,
+    #[arg(long)]
+    yes: bool,
+    /// Skip emergency fund allocation entirely
+    #[arg(long)]
+    no_emergency: bool,
+    /// Create the concept if it doesn't already exist
+    #[arg(long = "new-concept")]
+    new_concept: bool,
 }
 
 pub fn run(args: IncomeArgs) -> Result<()> {
-    let conn = open_db()?;
-    let month = args.month.unwrap_or_else(helpers::get_current_month);
-    let year = args.year.unwrap_or_else(helpers::get_current_year);
-    let date = helpers::get_today();
+    let mut conn = open_db()?;
+    let any_given = args.amount.is_some() || args.concept.is_some();
+    let mode = PromptMode::resolve(args.interactive, args.yes, any_given);
 
     let amount = match args.amount {
-        Some(v) => {
-            if v <= 0.0 {
-                eprintln!("Amount must be positive");
-                return Ok(());
-            }
-            v
+        Some(v) if v > 0.0 => v,
+        Some(_) => {
+            eprintln!("Amount must be positive");
+            return Ok(());
         }
-        None => helpers::map_dlg_err(
-            Input::new().with_prompt("Amount ($)").interact_text(),
+        None if mode.allows_prompt() => helpers::map_dlg_err(
+            Input::new()
+                .with_prompt("Amount ($)")
+                .validate_with(|v: &f64| if *v > 0.0 { Ok(()) } else { Err("Amount must be positive") })
+                .interact_text(),
         )?,
+        None => {
+            eprintln!("Missing amount. Usage: money-tracker income <AMOUNT> <CONCEPT>");
+            return Ok(());
+        }
     };
 
     let concept = match args.concept {
-        Some(c) => c,
-        None => {
+        Some(c) => match helpers::resolve_concept(&conn, &c, "income") {
+            Ok(resolved) => resolved,
+            Err(_) if args.new_concept => {
+                conn.execute(
+                    "INSERT INTO concepts (name, concept_type) VALUES (?1, 'income')",
+                    rusqlite::params![c],
+                )?;
+                c
+            }
+            Err(e) => return Err(e),
+        },
+        None if mode.allows_prompt() => {
             let concepts = helpers::get_concept_names(&conn, "income")?;
             let selection = helpers::map_dlg_err(
                 FuzzySelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
@@ -53,35 +74,46 @@ pub fn run(args: IncomeArgs) -> Result<()> {
             )?;
             concepts[selection].clone()
         }
+        None => {
+            eprintln!("Missing concept. Usage: money-tracker income <AMOUNT> <CONCEPT>");
+            return Ok(());
+        }
+    };
+
+    let to = match args.to {
+        Some(t) => helpers::resolve_account(&conn, &t)?,
+        None => match conn
+            .query_row(
+                "SELECT value FROM config WHERE key = 'income_account'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        {
+            Some(name) => helpers::resolve_account(&conn, &name)?,
+            None => account_service::default_account(&conn)?,
+        },
     };
 
     let description = match args.description {
         Some(d) => Some(d),
-        None => {
+        None if mode.prompts_optionals() => {
             let d: String = helpers::map_dlg_err(
                 Input::new()
                     .with_prompt("Description (optional)")
                     .allow_empty(true)
                     .interact_text(),
             )?;
-            if d.is_empty() { None } else { Some(d) }
+            if d.is_empty() {
+                None
+            } else {
+                Some(d)
+            }
         }
+        None => None,
     };
 
-    let txn = Transaction {
-        id: None,
-        date: date.clone(),
-        amount,
-        concept,
-        subconcept: None,
-        tipo: None,
-        description,
-        month,
-        year,
-    };
-
-    transaction_service::add_income(&conn, &txn)?;
-    println!("✓ Income registered: ${:.2}", amount);
+    let date = helpers::parse_date(args.date.as_deref())?;
 
     let emergency_pct: f64 = conn
         .query_row(
@@ -94,37 +126,47 @@ pub fn run(args: IncomeArgs) -> Result<()> {
         )
         .unwrap_or(10.0);
 
-    if helpers::map_dlg_err(
-        Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt(format!(
-                "Allocate {:.0}% (${:.2}) to emergency fund?",
-                emergency_pct,
-                amount * emergency_pct / 100.0
-            ))
-            .default(true)
-            .interact(),
-    )? {
-        let emergency_amount = amount * emergency_pct / 100.0;
-        let buckets = bucket_service::list_buckets(&conn)?;
-        let emergency_bucket = buckets.iter().find(|b| b.bucket_type == "emergency");
+    let emergency_account = account_service::emergency_account(&conn)?;
 
-        match emergency_bucket {
-            Some(b) => {
-                bucket_service::deposit_to_bucket(
-                    &conn,
-                    b.id.unwrap(),
-                    emergency_amount,
-                    &date,
-                    Some("Auto: emergency fund allocation"),
-                    month,
-                    year,
-                )?;
-                println!("  → ${:.2} allocated to '{}'", emergency_amount, b.name);
-            }
-            None => {
-                println!("  No emergency bucket found. Create one with `money-tracker bucket create`");
-            }
+    let split = if args.no_emergency || emergency_account.is_none() || !to.liquid {
+        false
+    } else if mode == PromptMode::Wizard {
+        helpers::map_dlg_err(
+            Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt(format!(
+                    "Allocate {emergency_pct:.0}% (${:.2}) to emergency fund?",
+                    amount * emergency_pct / 100.0
+                ))
+                .default(true)
+                .interact(),
+        )?
+    } else {
+        true
+    };
+
+    let result = entry_service::add_income_with_emergency_split(
+        &mut conn,
+        &date,
+        amount,
+        to.id,
+        &concept,
+        description.as_deref(),
+        split,
+    )?;
+
+    println!(
+        "✓ Ingreso ${amount:.2} · {concept} · {} · {date}  (#{})",
+        to.name, result.entry_id
+    );
+
+    match result.emergency {
+        Some((fund_name, fund_amount)) => {
+            println!("  → ${fund_amount:.2} a '{fund_name}' ({emergency_pct:.0}%)")
         }
+        None if !to.liquid && emergency_account.is_some() => {
+            println!("  (sin aporte a fondo: '{}' es una cuenta restringida)", to.name)
+        }
+        None => {}
     }
 
     Ok(())

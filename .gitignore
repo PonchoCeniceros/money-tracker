@@ -1,3 +1,6 @@
 /target
 *.db
+*.ods
+*.xlsx
 .DS_Store
+.claude/

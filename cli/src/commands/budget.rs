@@ -1,6 +1,8 @@
 use clap::{Args, Subcommand};
 use dialoguer::{FuzzySelect, Input};
 use money_core::db::open_db;
+use money_core::period::Period;
+use money_core::services::report_service;
 use money_core::Result;
 
 use crate::commands::helpers;
@@ -15,14 +17,13 @@ pub struct BudgetArgs {
 enum BudgetCommands {
     Show(ShowArgs),
     Set(SetArgs),
+    Rm(RmArgs),
 }
 
 #[derive(Args)]
 pub struct ShowArgs {
-    #[arg(short = 'm', long)]
-    month: Option<i32>,
-    #[arg(short = 'y', long)]
-    year: Option<i32>,
+    #[arg(short = 'p', long)]
+    period: Option<String>,
 }
 
 #[derive(Args)]
@@ -31,68 +32,61 @@ pub struct SetArgs {
     concept: Option<String>,
     #[arg(short = 'l', long)]
     limit: Option<f64>,
-    #[arg(short = 'm', long)]
-    month: Option<i32>,
-    #[arg(short = 'y', long)]
-    year: Option<i32>,
+    #[arg(short = 'p', long)]
+    period: Option<String>,
+}
+
+#[derive(Args)]
+pub struct RmArgs {
+    #[arg(short = 'c', long)]
+    concept: String,
+    #[arg(short = 'p', long)]
+    period: Option<String>,
 }
 
 pub fn run(args: BudgetArgs) -> Result<()> {
     match args.command {
-        BudgetCommands::Show(sa) => show(sa),
-        BudgetCommands::Set(sa) => set(sa),
+        BudgetCommands::Show(a) => show(a),
+        BudgetCommands::Set(a) => set(a),
+        BudgetCommands::Rm(a) => rm(a),
+    }
+}
+
+fn resolve_period(given: Option<String>) -> Result<Period> {
+    match given {
+        Some(p) => Period::parse(&p),
+        None => Ok(Period::current()),
     }
 }
 
 fn show(args: ShowArgs) -> Result<()> {
     let conn = open_db()?;
-    let month = args.month.unwrap_or_else(helpers::get_current_month);
-    let year = args.year.unwrap_or_else(helpers::get_current_year);
+    let period = resolve_period(args.period)?;
 
-    let mut stmt = conn.prepare(
-        "SELECT concept, monthly_limit FROM budgets WHERE month = ?1 AND year = ?2 ORDER BY concept",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![month, year], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
-    })?;
+    // Budgets are informative only — this never blocks anything, it's
+    // purely a read against the same accrued-expense join `report` uses.
+    let report = report_service::monthly_report(&conn, &period)?;
 
-    let mut budgets = Vec::new();
-    for row in rows {
-        let (concept, limit) = row?;
-        let actual: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(ABS(amount)), 0) FROM transactions
-             WHERE amount < 0 AND concept = ?1 AND month = ?2 AND year = ?3",
-            rusqlite::params![concept, month, year],
-            |row| row.get(0),
-        )?;
-        let pct = if limit > 0.0 {
-            (actual / limit * 100.0).min(999.0)
-        } else {
-            0.0
-        };
-        budgets.push((concept, limit, actual, pct));
-    }
-
-    if budgets.is_empty() {
-        println!("No budgets set for {}/{}", month, year);
-        println!("Set one with `money-tracker budget set`");
+    if report.budgets.is_empty() {
+        println!("Sin presupuestos para {}", period.as_str());
+        println!("Establece uno con `money-tracker budget set`");
         return Ok(());
     }
 
-    println!("Budget vs Actual — {}/{}", month, year);
+    println!("Presupuesto vs Real — {}", period.as_str());
     println!(
         "{:<25} {:>12} {:>12} {:>10}",
-        "Concept", "Budget", "Actual", "% Used"
+        "Concepto", "Presup.", "Real", "% Usado"
     );
     println!("{}", "-".repeat(65));
 
-    for (concept, limit, actual, pct) in &budgets {
+    for b in &report.budgets {
         println!(
             "{:<25} {:>12} {:>12} {:>9.0}%",
-            concept,
-            format!("${:.2}", limit),
-            format!("${:.2}", actual),
-            pct
+            b.concept,
+            format!("${:.2}", b.budgeted),
+            format!("${:.2}", b.actual),
+            b.pct
         );
     }
 
@@ -101,11 +95,10 @@ fn show(args: ShowArgs) -> Result<()> {
 
 fn set(args: SetArgs) -> Result<()> {
     let conn = open_db()?;
-    let month = args.month.unwrap_or_else(helpers::get_current_month);
-    let year = args.year.unwrap_or_else(helpers::get_current_year);
+    let period = resolve_period(args.period)?;
 
     let concept = match args.concept {
-        Some(c) => c,
+        Some(c) => helpers::resolve_concept(&conn, &c, "expense")?,
         None => {
             let concepts = helpers::get_concept_names(&conn, "expense")?;
             let selection = helpers::map_dlg_err(
@@ -120,23 +113,43 @@ fn set(args: SetArgs) -> Result<()> {
     };
 
     let limit = match args.limit {
-        Some(l) => l,
-        None => {
-            helpers::map_dlg_err(
-                Input::new().with_prompt("Monthly limit ($)").interact_text(),
-            )?
+        Some(l) if l > 0.0 => l,
+        Some(_) => {
+            eprintln!("Limit must be positive");
+            return Ok(());
         }
+        None => helpers::map_dlg_err(
+            Input::new()
+                .with_prompt("Monthly limit ($)")
+                .validate_with(|v: &f64| if *v > 0.0 { Ok(()) } else { Err("Limit must be positive") })
+                .interact_text(),
+        )?,
     };
 
     conn.execute(
-        "DELETE FROM budgets WHERE concept = ?1 AND month = ?2 AND year = ?3",
-        rusqlite::params![concept, month, year],
-    )?;
-    conn.execute(
-        "INSERT INTO budgets (concept, monthly_limit, month, year) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![concept, limit, month, year],
+        "INSERT INTO budgets (concept, monthly_limit, period) VALUES (?1, ?2, ?3)
+         ON CONFLICT(concept, period) DO UPDATE SET monthly_limit = excluded.monthly_limit",
+        rusqlite::params![concept, limit, period.as_str()],
     )?;
 
-    println!("✓ Budget for '{concept}' set to ${:.2}/month", limit);
+    println!(
+        "✓ Presupuesto de '{concept}' para {}: ${limit:.2}/mes",
+        period.as_str()
+    );
+    Ok(())
+}
+
+fn rm(args: RmArgs) -> Result<()> {
+    let conn = open_db()?;
+    let period = resolve_period(args.period)?;
+    let affected = conn.execute(
+        "DELETE FROM budgets WHERE concept = ?1 AND period = ?2",
+        rusqlite::params![args.concept, period.as_str()],
+    )?;
+    if affected == 0 {
+        println!("No había presupuesto de '{}' para {}", args.concept, period.as_str());
+    } else {
+        println!("✓ Presupuesto de '{}' para {} eliminado", args.concept, period.as_str());
+    }
     Ok(())
 }

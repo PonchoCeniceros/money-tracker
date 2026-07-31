@@ -1,8 +1,11 @@
+//! Bucket deposit/withdraw — kept under this name because it's the user's
+//! own vocabulary for operations (c) and (d). Creating and listing buckets
+//! now lives in `account` (buckets are just accounts of kind
+//! emergency/target); this module is left with only the two movements.
 use clap::{Args, Subcommand};
 use dialoguer::{FuzzySelect, Input};
 use money_core::db::open_db;
-use money_core::models::Bucket;
-use money_core::services::bucket_service;
+use money_core::services::{account_service, entry_service};
 use money_core::Result;
 
 use crate::commands::helpers;
@@ -15,17 +18,12 @@ pub struct BucketArgs {
 
 #[derive(Subcommand)]
 enum BucketCommands {
-    Create(CreateArgs),
-    List,
+    /// Deposit into a savings bucket (transfer, not an expense)
     Deposit(DepositArgs),
+    /// Withdraw from a savings bucket into a spending account.
+    /// This is a transfer, NOT an expense — if you already spent it,
+    /// also register the expense with `add ... --from <account>`.
     Withdraw(WithdrawArgs),
-}
-
-#[derive(Args)]
-pub struct CreateArgs {
-    name: Option<String>,
-    #[arg(short = 't', long)]
-    target: Option<f64>,
 }
 
 #[derive(Args)]
@@ -34,6 +32,10 @@ pub struct DepositArgs {
     bucket: Option<String>,
     #[arg(short = 'a', long)]
     amount: Option<f64>,
+    #[arg(short = 'f', long)]
+    from: Option<String>,
+    #[arg(short = 'D', long)]
+    date: Option<String>,
 }
 
 #[derive(Args)]
@@ -42,128 +44,34 @@ pub struct WithdrawArgs {
     bucket: Option<String>,
     #[arg(short = 'a', long)]
     amount: Option<f64>,
+    #[arg(short = 't', long)]
+    to: Option<String>,
+    #[arg(short = 'D', long)]
+    date: Option<String>,
 }
 
 pub fn run(args: BucketArgs) -> Result<()> {
     match args.command {
-        BucketCommands::Create(ca) => create(ca),
-        BucketCommands::List => list(),
-        BucketCommands::Deposit(da) => deposit(da),
-        BucketCommands::Withdraw(wa) => withdraw(wa),
+        BucketCommands::Deposit(a) => deposit(a),
+        BucketCommands::Withdraw(a) => withdraw(a),
     }
 }
 
-fn create(args: CreateArgs) -> Result<()> {
-    let conn = open_db()?;
-
-    let name = match args.name {
-        Some(n) => n,
-        None => helpers::map_dlg_err(Input::new().with_prompt("Bucket name").interact_text())?,
-    };
-
-    let existing = bucket_service::list_buckets(&conn)?
-        .into_iter()
-        .any(|b| b.name == name);
-    if existing {
-        eprintln!("Bucket '{name}' already exists");
-        return Ok(());
-    }
-
-    let is_emergency = name.to_lowercase().contains("emergencia")
-        || name.to_lowercase().contains("emergency");
-
-    let bucket_type = if is_emergency {
-        "emergency".to_string()
-    } else {
-        "target".to_string()
-    };
-
-    let target_amount = if bucket_type == "target" {
-        match args.target {
-            Some(t) => {
-                if t <= 0.0 {
-                    eprintln!("Target amount must be positive");
-                    return Ok(());
-                }
-                Some(t)
-            }
-            None => {
-                let t: f64 = helpers::map_dlg_err(
-                    Input::new().with_prompt("Target amount ($)").interact_text(),
-                )?;
-                if t <= 0.0 {
-                    eprintln!("Target amount must be positive");
-                    return Ok(());
-                }
-                Some(t)
-            }
-        }
-    } else {
-        None
-    };
-
-    let bucket = Bucket {
-        id: None,
-        name: name.clone(),
-        bucket_type,
-        target_amount,
-        savings_percentage: None,
-        current_balance: 0.0,
-    };
-
-    bucket_service::create_bucket(&conn, &bucket)?;
-    println!("✓ Bucket '{name}' created");
-
-    Ok(())
-}
-
-fn list() -> Result<()> {
-    let conn = open_db()?;
-    let buckets = bucket_service::list_buckets(&conn)?;
-
-    if buckets.is_empty() {
-        println!("No buckets yet. Create one with `money-tracker bucket create`");
-        return Ok(());
-    }
-
-    println!(
-        "{:<25} {:<10} {:>12} {:>12} {:>10}",
-        "Name", "Type", "Balance", "Target", "Progress"
-    );
-    println!("{}", "-".repeat(75));
-
-    for b in &buckets {
-        let progress = match b.progress_pct() {
-            Some(p) => format!("{:.0}%", p),
-            None => "—".to_string(),
-        };
-        let target = match b.target_amount {
-            Some(t) => format!("${:.2}", t),
-            None => "—".to_string(),
-        };
-        println!(
-            "{:<25} {:<10} {:>12} {:>12} {:>10}",
-            b.name,
-            b.bucket_type,
-            format!("${:.2}", b.current_balance),
-            target,
-            progress
-        );
-    }
-
-    Ok(())
-}
-
-fn deposit(args: DepositArgs) -> Result<()> {
-    let conn = open_db()?;
-    let month = helpers::get_current_month();
-    let year = helpers::get_current_year();
-    let date = helpers::get_today();
-
-    let bucket_name = match args.bucket {
-        Some(b) => b,
+fn pick_bucket_name(conn: &rusqlite::Connection, given: Option<String>) -> Result<String> {
+    match given {
+        Some(b) => Ok(b),
         None => {
-            let buckets = helpers::get_bucket_names(&conn)?;
+            let buckets: Vec<String> = account_service::list_accounts(conn, false)?
+                .into_iter()
+                .filter(|a| {
+                    matches!(
+                        a.kind,
+                        money_core::models::AccountKind::Emergency
+                            | money_core::models::AccountKind::Target
+                    )
+                })
+                .map(|a| a.name)
+                .collect();
             let selection = helpers::map_dlg_err(
                 FuzzySelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
                     .with_prompt("Bucket")
@@ -171,113 +79,86 @@ fn deposit(args: DepositArgs) -> Result<()> {
                     .default(0)
                     .interact(),
             )?;
-            buckets[selection].clone()
+            Ok(buckets[selection].clone())
         }
-    };
+    }
+}
 
-    let bucket = bucket_service::get_bucket_by_name(&conn, &bucket_name)?;
+fn prompt_amount() -> Result<f64> {
+    helpers::map_dlg_err(
+        Input::new()
+            .with_prompt("Amount ($)")
+            .validate_with(|v: &f64| if *v > 0.0 { Ok(()) } else { Err("Amount must be positive") })
+            .interact_text(),
+    )
+}
+
+fn deposit(args: DepositArgs) -> Result<()> {
+    let conn = open_db()?;
+    let bucket_name = pick_bucket_name(&conn, args.bucket)?;
+    let bucket = helpers::resolve_account(&conn, &bucket_name)?;
 
     let amount = match args.amount {
-        Some(a) => {
-            if a <= 0.0 {
-                eprintln!("Amount must be positive");
-                return Ok(());
-            }
-            a
+        Some(a) if a > 0.0 => a,
+        Some(_) => {
+            eprintln!("Amount must be positive");
+            return Ok(());
         }
-        None => helpers::map_dlg_err(
-            Input::new().with_prompt("Amount ($)").interact_text(),
-        )?,
+        None => prompt_amount()?,
     };
 
-    let desc: String = helpers::map_dlg_err(
-        Input::new()
-            .with_prompt("Description (optional)")
-            .allow_empty(true)
-            .interact_text(),
-    )?;
-    let description = if desc.is_empty() { None } else { Some(desc.as_str()) };
+    let from = match args.from {
+        Some(f) => helpers::resolve_account(&conn, &f)?,
+        None => account_service::default_account(&conn)?,
+    };
 
-    bucket_service::deposit_to_bucket(
-        &conn,
-        bucket.id.unwrap(),
-        amount,
-        &date,
-        description,
-        month,
-        year,
-    )?;
+    let date = helpers::parse_date(args.date.as_deref())?;
+
+    entry_service::add_transfer(&conn, &date, amount, from.id, bucket.id, None)?;
+    let new_balance = account_service::get_account(&conn, bucket.id)?;
 
     println!(
-        "✓ ${:.2} deposited to '{}' (new balance: ${:.2})",
-        amount,
-        bucket.name,
-        bucket.current_balance + amount
+        "✓ ${amount:.2} depositado a '{}' (saldo: ${:.2})",
+        bucket.name, new_balance.balance
     );
-
+    if let Some(pct) = new_balance.progress_pct() {
+        println!(
+            "  {}: ${:.2} / ${:.2} ({pct:.0}%)",
+            bucket.name,
+            new_balance.balance,
+            new_balance.target_amount.unwrap_or(0.0)
+        );
+    }
     Ok(())
 }
 
 fn withdraw(args: WithdrawArgs) -> Result<()> {
     let conn = open_db()?;
-    let month = helpers::get_current_month();
-    let year = helpers::get_current_year();
-    let date = helpers::get_today();
-
-    let bucket_name = match args.bucket {
-        Some(b) => b,
-        None => {
-            let buckets = helpers::get_bucket_names(&conn)?;
-            let selection = helpers::map_dlg_err(
-                FuzzySelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                    .with_prompt("Bucket")
-                    .items(&buckets)
-                    .default(0)
-                    .interact(),
-            )?;
-            buckets[selection].clone()
-        }
-    };
-
-    let bucket = bucket_service::get_bucket_by_name(&conn, &bucket_name)?;
+    let bucket_name = pick_bucket_name(&conn, args.bucket)?;
+    let bucket = helpers::resolve_account(&conn, &bucket_name)?;
 
     let amount = match args.amount {
-        Some(a) => {
-            if a <= 0.0 {
-                eprintln!("Amount must be positive");
-                return Ok(());
-            }
-            a
+        Some(a) if a > 0.0 => a,
+        Some(_) => {
+            eprintln!("Amount must be positive");
+            return Ok(());
         }
-        None => helpers::map_dlg_err(
-            Input::new().with_prompt("Amount ($)").interact_text(),
-        )?,
+        None => prompt_amount()?,
     };
 
-    let desc: String = helpers::map_dlg_err(
-        Input::new()
-            .with_prompt("Description (optional)")
-            .allow_empty(true)
-            .interact_text(),
-    )?;
-    let description = if desc.is_empty() { None } else { Some(desc.as_str()) };
+    let to = match args.to {
+        Some(t) => helpers::resolve_account(&conn, &t)?,
+        None => account_service::default_account(&conn)?,
+    };
 
-    bucket_service::withdraw_from_bucket(
-        &conn,
-        bucket.id.unwrap(),
-        amount,
-        &date,
-        description,
-        month,
-        year,
-    )?;
+    let date = helpers::parse_date(args.date.as_deref())?;
 
+    entry_service::add_transfer(&conn, &date, amount, bucket.id, to.id, None)?;
+
+    println!("✓ ${amount:.2} movido de '{}' a '{}'", bucket.name, to.name);
     println!(
-        "✓ ${:.2} withdrawn from '{}' (new balance: ${:.2})",
-        amount,
-        bucket.name,
-        bucket.current_balance - amount
+        "  Esto NO es un gasto. Si ya lo gastaste: money-tracker add {amount} <concepto> --from {}",
+        to.name
     );
-
     Ok(())
 }

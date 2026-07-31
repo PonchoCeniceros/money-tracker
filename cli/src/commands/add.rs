@@ -1,63 +1,69 @@
 use clap::Args;
-use dialoguer::{FuzzySelect, Input, Select};
+use dialoguer::{FuzzySelect, Input};
 use money_core::db::open_db;
-use money_core::models::Transaction;
-use money_core::services::transaction_service;
+use money_core::period::Period;
+use money_core::services::{account_service, entry_service, report_service};
 use money_core::Result;
 
-use crate::commands::helpers;
+use crate::commands::helpers::{self, PromptMode};
 
 #[derive(Args)]
 pub struct AddArgs {
-    #[arg(short = 'a', long)]
     amount: Option<f64>,
-    #[arg(short = 'c', long)]
     concept: Option<String>,
+    #[arg(short = 'f', long)]
+    from: Option<String>,
     #[arg(short = 's', long)]
     subconcept: Option<String>,
-    #[arg(short = 't', long)]
-    tipo: Option<String>,
     #[arg(short = 'd', long)]
     description: Option<String>,
-    #[arg(short = 'm', long)]
-    month: Option<i32>,
-    #[arg(short = 'y', long)]
-    year: Option<i32>,
+    #[arg(short = 'D', long)]
+    date: Option<String>,
+    #[arg(short = 'i', long)]
+    interactive: bool,
+    #[arg(long)]
+    yes: bool,
+    /// Create the concept if it doesn't already exist
+    #[arg(long = "new-concept")]
+    new_concept: bool,
 }
 
 pub fn run(args: AddArgs) -> Result<()> {
     let conn = open_db()?;
-    let month = args.month.unwrap_or_else(helpers::get_current_month);
-    let year = args.year.unwrap_or_else(helpers::get_current_year);
+    let any_given = args.amount.is_some() || args.concept.is_some();
+    let mode = PromptMode::resolve(args.interactive, args.yes, any_given);
 
     let amount = match args.amount {
-        Some(v) => {
-            if v <= 0.0 {
-                eprintln!("Amount must be positive");
-                return Ok(());
-            }
-            -v
+        Some(v) if v > 0.0 => v,
+        Some(_) => {
+            eprintln!("Amount must be positive");
+            return Ok(());
         }
+        None if mode.allows_prompt() => helpers::map_dlg_err(
+            Input::new()
+                .with_prompt("Amount ($)")
+                .validate_with(|v: &f64| if *v > 0.0 { Ok(()) } else { Err("Amount must be positive") })
+                .interact_text(),
+        )?,
         None => {
-            let v: f64 = helpers::map_dlg_err(
-                Input::new()
-                    .with_prompt("Amount ($)")
-                    .validate_with(|v: &f64| {
-                        if *v <= 0.0 {
-                            Err("Amount must be positive")
-                        } else {
-                            Ok(())
-                        }
-                    })
-                    .interact_text(),
-            )?;
-            -v
+            eprintln!("Missing amount. Usage: money-tracker add <AMOUNT> <CONCEPT>");
+            return Ok(());
         }
     };
 
     let concept = match args.concept {
-        Some(c) => c,
-        None => {
+        Some(c) => match helpers::resolve_concept(&conn, &c, "expense") {
+            Ok(resolved) => resolved,
+            Err(_) if args.new_concept => {
+                conn.execute(
+                    "INSERT INTO concepts (name, concept_type) VALUES (?1, 'expense')",
+                    rusqlite::params![c],
+                )?;
+                c
+            }
+            Err(e) => return Err(e),
+        },
+        None if mode.allows_prompt() => {
             let concepts = helpers::get_concept_names(&conn, "expense")?;
             let selection = helpers::map_dlg_err(
                 FuzzySelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
@@ -68,62 +74,83 @@ pub fn run(args: AddArgs) -> Result<()> {
             )?;
             concepts[selection].clone()
         }
+        None => {
+            eprintln!("Missing concept. Usage: money-tracker add <AMOUNT> <CONCEPT>");
+            return Ok(());
+        }
+    };
+
+    let from = match args.from {
+        Some(f) => helpers::resolve_account(&conn, &f)?,
+        None => account_service::default_account(&conn)?,
     };
 
     let subconcept = match args.subconcept {
         Some(s) => Some(s),
-        None => {
+        None if mode.prompts_optionals() => {
             let s: String = helpers::map_dlg_err(
                 Input::new()
                     .with_prompt("Subconcept (optional)")
                     .allow_empty(true)
                     .interact_text(),
             )?;
-            if s.is_empty() { None } else { Some(s) }
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         }
-    };
-
-    let tipo = match args.tipo {
-        Some(t) => Some(t),
-        None => {
-            let tipos = vec!["Liquido", "Credito", "Despensa", "Fondo emergencia"];
-            let selection = helpers::map_dlg_err(
-                Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                    .with_prompt("Type")
-                    .items(&tipos)
-                    .default(0)
-                    .interact(),
-            )?;
-            Some(tipos[selection].to_string())
-        }
+        None => None,
     };
 
     let description = match args.description {
         Some(d) => Some(d),
-        None => {
+        None if mode.prompts_optionals() => {
             let d: String = helpers::map_dlg_err(
                 Input::new()
                     .with_prompt("Description (optional)")
                     .allow_empty(true)
                     .interact_text(),
             )?;
-            if d.is_empty() { None } else { Some(d) }
+            if d.is_empty() {
+                None
+            } else {
+                Some(d)
+            }
         }
+        None => None,
     };
 
-    let txn = Transaction {
-        id: None,
-        date: helpers::get_today(),
+    let date = helpers::parse_date(args.date.as_deref())?;
+
+    let entry_id = entry_service::add_expense(
+        &conn,
+        &date,
         amount,
-        concept,
-        subconcept,
-        tipo,
-        description,
-        month,
-        year,
-    };
+        from.id,
+        &concept,
+        subconcept.as_deref(),
+        description.as_deref(),
+    )?;
 
-    transaction_service::add_transaction(&conn, &txn)?;
-    println!("✓ Expense registered: ${:.2}", amount.abs());
+    println!(
+        "✓ Gasto ${amount:.2} · {concept} · {} · {date}  (#{entry_id})",
+        from.name
+    );
+
+    // Budgets are informative only: warn on overrun, never block.
+    if let Ok(period) = Period::from_date(&date) {
+        if let Ok(report) = report_service::monthly_report(&conn, &period) {
+            if let Some(budget) = report.budgets.iter().find(|b| b.concept == concept) {
+                if budget.pct > 100.0 {
+                    println!(
+                        "  ⚠ {concept}: ${:.2} de ${:.2} presupuestado ({:.0}%)",
+                        budget.actual, budget.budgeted, budget.pct
+                    );
+                }
+            }
+        }
+    }
+
     Ok(())
 }

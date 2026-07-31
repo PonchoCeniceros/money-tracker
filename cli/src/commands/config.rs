@@ -59,7 +59,7 @@ fn list() -> Result<()> {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
 
-    println!("{:<30} {}", "Key", "Value");
+    println!("{:<30} Value", "Key");
     println!("{}", "-".repeat(45));
     for row in rows {
         let (k, v) = row?;
