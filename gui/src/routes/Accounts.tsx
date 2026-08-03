@@ -6,6 +6,7 @@ import { useApi, bumpRevision } from "../hooks/useApi";
 import { Field } from "../components/Field";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { Money } from "../components/Money";
+import { DepositIcon, WithdrawIcon, CheckCircleIcon, ArchiveIcon } from "../components/icons";
 import ui from "../components/ui.module.css";
 import type { AccountBalance } from "../bindings/AccountBalance";
 
@@ -78,29 +79,37 @@ export default function Accounts() {
                       {(a.kind === "emergency" || a.kind === "target") && (
                         <>
                           <button
-                            className={ui.buttonSecondary}
+                            className={ui.iconButton}
+                            title="Depositar"
+                            aria-label="Depositar"
                             onClick={() => setAction({ kind: "deposit", account: a })}
                           >
-                            Depositar
+                            <DepositIcon />
                           </button>
                           <button
-                            className={ui.buttonSecondary}
+                            className={ui.iconButton}
+                            title="Retirar"
+                            aria-label="Retirar"
                             onClick={() => setAction({ kind: "withdraw", account: a })}
                           >
-                            Retirar
+                            <WithdrawIcon />
                           </button>
                         </>
                       )}
                       {a.kind === "spending" && (
                         <button
-                          className={ui.buttonSecondary}
+                          className={ui.iconButton}
+                          title="Cuadrar"
+                          aria-label="Cuadrar"
                           onClick={() => setAction({ kind: "reconcile", account: a })}
                         >
-                          Cuadrar
+                          <CheckCircleIcon />
                         </button>
                       )}
                       <button
-                        className={ui.buttonDanger}
+                        className={ui.iconButtonDanger}
+                        title="Archivar"
+                        aria-label="Archivar"
                         onClick={async () => {
                           try {
                             await accountsApi.archive(a.id);
@@ -110,7 +119,7 @@ export default function Accounts() {
                           }
                         }}
                       >
-                        Archivar
+                        <ArchiveIcon />
                       </button>
                     </div>
                   )}

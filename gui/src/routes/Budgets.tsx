@@ -10,6 +10,7 @@ import { ErrorBanner } from "../components/ErrorBanner";
 import { Money } from "../components/Money";
 import { DonutChart } from "../components/DonutChart";
 import { colorForConcept, CONCEPT_ORDER } from "../components/chartColors";
+import { TrashIcon } from "../components/icons";
 import ui from "../components/ui.module.css";
 
 // Fixed circular order the palette was validated against — anything not
@@ -183,8 +184,13 @@ export default function Budgets() {
                   <Money amount={b.monthly_limit} />
                 </td>
                 <td>
-                  <button className={ui.buttonDanger} onClick={() => remove(b.concept)}>
-                    Quitar
+                  <button
+                    className={ui.iconButtonDanger}
+                    title="Quitar"
+                    aria-label="Quitar"
+                    onClick={() => remove(b.concept)}
+                  >
+                    <TrashIcon />
                   </button>
                 </td>
               </tr>

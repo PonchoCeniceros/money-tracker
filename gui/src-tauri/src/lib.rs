@@ -20,6 +20,7 @@ pub fn run() {
             commands::entries::add_income,
             commands::entries::add_transfer,
             commands::entries::list_entries,
+            commands::entries::update_entry,
             commands::entries::delete_entry,
             commands::buckets::bucket_deposit,
             commands::buckets::bucket_withdraw,

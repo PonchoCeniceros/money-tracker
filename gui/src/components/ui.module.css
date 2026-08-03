@@ -115,6 +115,43 @@
   font-weight: 600;
 }
 
+/* Icon-only row actions (Editar/Borrar as a pencil/trash glyph instead of
+   text) — same idea as icon-only antd buttons, sized to a small square
+   instead of the text buttons' pill shape. */
+.iconButton,
+.iconButtonDanger {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.iconButton {
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.iconButton:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.iconButtonDanger {
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.iconButtonDanger:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
 .input {
   height: var(--control-h);
   box-sizing: border-box;

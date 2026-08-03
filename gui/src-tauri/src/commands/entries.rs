@@ -2,7 +2,7 @@ use tauri::State;
 
 use money_core::models::{Entry, EntryKind};
 use money_core::period::Period;
-use money_core::services::entry_service::{self, EntryFilter};
+use money_core::services::entry_service::{self, EntryFilter, EntryUpdate};
 
 use crate::error::ApiResult;
 use crate::state::AppState;
@@ -116,6 +116,32 @@ pub fn list_entries(state: State<AppState>, filter: EntryFilterInput) -> ApiResu
         limit: filter.limit,
     };
     Ok(entry_service::list(&conn, &f)?)
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct EntryUpdateInput {
+    pub date: Option<String>,
+    pub amount: Option<f64>,
+    pub concept: Option<String>,
+    pub subconcept: Option<String>,
+    pub description: Option<String>,
+    pub from_account_id: Option<i64>,
+    pub to_account_id: Option<i64>,
+}
+
+#[tauri::command]
+pub fn update_entry(state: State<AppState>, id: i64, input: EntryUpdateInput) -> ApiResult<Entry> {
+    let conn = state.conn.lock().unwrap();
+    let upd = EntryUpdate {
+        date: input.date,
+        amount: input.amount,
+        concept: input.concept,
+        subconcept: input.subconcept,
+        description: input.description,
+        from_account_id: input.from_account_id,
+        to_account_id: input.to_account_id,
+    };
+    Ok(entry_service::update(&conn, id, &upd)?)
 }
 
 #[tauri::command]

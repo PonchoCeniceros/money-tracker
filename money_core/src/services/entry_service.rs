@@ -2,7 +2,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{AppError, Result};
 use crate::models::{AccountKind, Entry, EntryKind, NewEntry};
-use crate::period::Period;
+use crate::period::{validate_date, Period};
 
 /// Sole writer of `entries`. Every other constructor in this module funnels
 /// through here, so the invariants encoded in `NewEntry`'s constructors are
@@ -245,22 +245,7 @@ pub fn list(conn: &Connection, f: &EntryFilter) -> Result<Vec<Entry>> {
 
     let mut stmt = conn.prepare(&sql)?;
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let rows = stmt.query_map(param_refs.as_slice(), |row| {
-        let kind_str: String = row.get(2)?;
-        Ok(Entry {
-            id: row.get(0)?,
-            date: row.get(1)?,
-            kind: EntryKind::from_str(&kind_str).unwrap_or(EntryKind::Expense),
-            amount: row.get(3)?,
-            from_account_id: row.get(4)?,
-            to_account_id: row.get(5)?,
-            from_account: row.get(6)?,
-            to_account: row.get(7)?,
-            concept: row.get(8)?,
-            subconcept: row.get(9)?,
-            description: row.get(10)?,
-        })
-    })?;
+    let rows = stmt.query_map(param_refs.as_slice(), row_to_entry)?;
 
     let mut result = Vec::new();
     for row in rows {
@@ -269,12 +254,142 @@ pub fn list(conn: &Connection, f: &EntryFilter) -> Result<Vec<Entry>> {
     Ok(result)
 }
 
+fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<Entry> {
+    let kind_str: String = row.get(2)?;
+    Ok(Entry {
+        id: row.get(0)?,
+        date: row.get(1)?,
+        kind: EntryKind::from_str(&kind_str).unwrap_or(EntryKind::Expense),
+        amount: row.get(3)?,
+        from_account_id: row.get(4)?,
+        to_account_id: row.get(5)?,
+        from_account: row.get(6)?,
+        to_account: row.get(7)?,
+        concept: row.get(8)?,
+        subconcept: row.get(9)?,
+        description: row.get(10)?,
+    })
+}
+
+pub fn get(conn: &Connection, id: i64) -> Result<Entry> {
+    conn.query_row(
+        "SELECT id, date, kind, amount, from_account_id, to_account_id,
+                from_account, to_account, concept, subconcept, description
+           FROM entries_view WHERE id = ?1",
+        rusqlite::params![id],
+        row_to_entry,
+    )
+    .optional()?
+    .ok_or_else(|| AppError::NotFound(format!("Entry #{id} not found")))
+}
+
 pub fn delete(conn: &Connection, id: i64) -> Result<()> {
     let affected = conn.execute("DELETE FROM entries WHERE id = ?1", rusqlite::params![id])?;
     if affected == 0 {
         return Err(AppError::NotFound(format!("Entry #{id} not found")));
     }
     Ok(())
+}
+
+/// Patch for [`update`]. Every field is "leave unchanged" when `None` —
+/// there is deliberately no way to clear an existing `subconcept` or
+/// `description` back to NULL through this path (a fresh `add`/`rm` pair
+/// remains the way to do that), which keeps this an unambiguous patch
+/// rather than needing a separate "clear" signal per optional field.
+#[derive(Debug, Clone, Default)]
+pub struct EntryUpdate {
+    pub date: Option<String>,
+    pub amount: Option<f64>,
+    pub concept: Option<String>,
+    pub subconcept: Option<String>,
+    pub description: Option<String>,
+    pub from_account_id: Option<i64>,
+    pub to_account_id: Option<i64>,
+}
+
+/// Corrects an existing entry in place, preserving its id. Only the account
+/// side that already applies to the entry's `kind` may be changed (e.g. an
+/// expense has no `to_account_id` to set) — the kind itself never changes,
+/// since that would make it a different kind of movement entirely, not a
+/// correction of this one.
+///
+/// Skips re-running the overdraft/credit-limit guard that `add_expense`/
+/// `add_transfer` apply on insert: this is a correction to historical data,
+/// not a new movement, and the original entry already passed that check
+/// once. The SQL CHECK constraints (kind/nullability, amount > 0, no
+/// self-transfer, valid date) remain enforced as a backstop.
+pub fn update(conn: &Connection, id: i64, upd: &EntryUpdate) -> Result<Entry> {
+    let current = get(conn, id)?;
+
+    match current.kind {
+        EntryKind::Income | EntryKind::Opening => {
+            if upd.from_account_id.is_some() {
+                return Err(AppError::Invalid(
+                    "This entry has no source account to change (it's an income/opening entry)"
+                        .into(),
+                ));
+            }
+        }
+        EntryKind::Expense => {
+            if upd.to_account_id.is_some() {
+                return Err(AppError::Invalid(
+                    "This entry has no destination account to change (it's an expense)".into(),
+                ));
+            }
+        }
+        EntryKind::Transfer => {}
+    }
+    if matches!(current.kind, EntryKind::Transfer | EntryKind::Opening) && upd.concept.is_some() {
+        return Err(AppError::Invalid(
+            "Transfers and opening balances don't carry a concept".into(),
+        ));
+    }
+
+    let new_date = upd.date.clone().unwrap_or_else(|| current.date.clone());
+    let new_amount = upd.amount.unwrap_or(current.amount);
+    let new_from = upd.from_account_id.or(current.from_account_id);
+    let new_to = upd.to_account_id.or(current.to_account_id);
+    let new_concept = upd.concept.clone().or_else(|| current.concept.clone());
+    let new_subconcept = upd
+        .subconcept
+        .clone()
+        .or_else(|| current.subconcept.clone());
+    let new_description = upd
+        .description
+        .clone()
+        .or_else(|| current.description.clone());
+
+    validate_date(&new_date)?;
+    if new_amount <= 0.0 {
+        return Err(AppError::Invalid("Amount must be positive".into()));
+    }
+    if current.kind == EntryKind::Transfer && new_from == new_to {
+        return Err(AppError::Invalid(
+            "Transfer source and destination cannot be the same account".into(),
+        ));
+    }
+    if matches!(current.kind, EntryKind::Income | EntryKind::Expense) && new_concept.is_none() {
+        return Err(AppError::Invalid("Concept is required".into()));
+    }
+
+    conn.execute(
+        "UPDATE entries
+            SET date = ?1, amount = ?2, from_account_id = ?3, to_account_id = ?4,
+                concept = ?5, subconcept = ?6, description = ?7
+          WHERE id = ?8",
+        rusqlite::params![
+            new_date,
+            new_amount,
+            new_from,
+            new_to,
+            new_concept,
+            new_subconcept,
+            new_description,
+            id,
+        ],
+    )?;
+
+    get(conn, id)
 }
 
 #[cfg(test)]
@@ -496,5 +611,86 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fondo_balance, 2400.0);
+    }
+
+    #[test]
+    fn update_changes_amount_and_account_for_an_expense() {
+        let conn = setup();
+        let debito = make_account(&conn, "debito", "spending");
+        let vales = make_account(&conn, "vales", "spending");
+        let id = add_expense(&conn, "2026-08-01", 210.0, debito, "Alimentos", None, None).unwrap();
+
+        let updated = update(
+            &conn,
+            id,
+            &EntryUpdate {
+                amount: Some(177.0),
+                from_account_id: Some(vales),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.amount, 177.0);
+        assert_eq!(updated.from_account_id, Some(vales));
+
+        let debito_balance: f64 = conn
+            .query_row(
+                "SELECT balance FROM account_balances WHERE id = ?1",
+                rusqlite::params![debito],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let vales_balance: f64 = conn
+            .query_row(
+                "SELECT balance FROM account_balances WHERE id = ?1",
+                rusqlite::params![vales],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(debito_balance, 0.0);
+        assert_eq!(vales_balance, -177.0);
+    }
+
+    #[test]
+    fn update_rejects_setting_the_wrong_side_for_the_kind() {
+        let conn = setup();
+        let debito = make_account(&conn, "debito", "spending");
+        let id = add_expense(&conn, "2026-08-01", 210.0, debito, "Alimentos", None, None).unwrap();
+
+        let err = update(
+            &conn,
+            id,
+            &EntryUpdate {
+                to_account_id: Some(debito),
+                ..Default::default()
+            },
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn update_rejects_turning_a_transfer_into_a_self_transfer() {
+        let conn = setup();
+        let debito = make_account(&conn, "debito", "spending");
+        let fondo = make_account(&conn, "fondo", "emergency");
+        add_income(&conn, "2026-08-01", 1000.0, debito, "Nomina", None).unwrap();
+        let id = add_transfer(&conn, "2026-08-02", 200.0, debito, fondo, None).unwrap();
+
+        let err = update(
+            &conn,
+            id,
+            &EntryUpdate {
+                to_account_id: Some(debito),
+                ..Default::default()
+            },
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn update_on_missing_entry_is_not_found() {
+        let conn = setup();
+        let err = update(&conn, 999, &EntryUpdate::default());
+        assert!(matches!(err, Err(AppError::NotFound(_))));
     }
 }

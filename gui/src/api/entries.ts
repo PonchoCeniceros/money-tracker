@@ -40,10 +40,22 @@ export interface EntryFilterInput {
   limit?: number | null;
 }
 
+export interface EntryUpdateInput {
+  date?: string | null;
+  amount?: number | null;
+  concept?: string | null;
+  subconcept?: string | null;
+  description?: string | null;
+  from_account_id?: number | null;
+  to_account_id?: number | null;
+}
+
 export const entriesApi = {
   addExpense: (input: ExpenseInput) => call<number>("add_expense", { input }),
   addIncome: (input: IncomeInput) => call<IncomeOutput>("add_income", { input }),
   addTransfer: (input: TransferInput) => call<number>("add_transfer", { input }),
   list: (filter: EntryFilterInput = {}) => call<Entry[]>("list_entries", { filter }),
+  update: (id: number, input: EntryUpdateInput) =>
+    call<Entry>("update_entry", { id, input }),
   remove: (id: number) => call<void>("delete_entry", { id }),
 };
