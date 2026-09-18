@@ -18,8 +18,8 @@ use serde_json::Value;
 use crate::auth::{AuthSession, SupabaseAuth};
 use crate::error::{AppError, Result};
 use crate::models::{
-    Account, AccountKind, Budget, Concept, Config, Entry, EntryFilter, EntryKind, NewAccount,
-    NewEntry, EntryUpdate,
+    Account, AccountKind, AccountBalance, Budget, Concept, Config, Entry, EntryFilter, EntryKind,
+    NewAccount, NewEntry, EntryUpdate,
 };
 use crate::storage::{LedgerBackend, LedgerDelta};
 
@@ -148,6 +148,7 @@ impl SupabaseBackend {
         let status = resp.status();
         let text = resp.text().map_err(AppError::Network)?;
         if !status.is_success() {
+            eprintln!("[remote] HTTP {} -> {}", path, text);
             return Err(map_postgrest_error(status, &text));
         }
         serde_json::from_str(&text).map_err(|_| AppError::Remote(format!("bad JSON from {path}")))
@@ -173,7 +174,11 @@ impl SupabaseBackend {
     }
 
     fn entries_query(f: &EntryFilter) -> Vec<(String, String)> {
-        let mut q = vec![("select".to_string(), "*".to_string())];
+        let mut q = vec![(
+            "select".to_string(),
+            "id,date,kind,amount,from_account_id,to_account_id,concept,subconcept,description,from_account,to_account"
+                .to_string(),
+        )];
         if let Some(period) = &f.period {
             let lo = period.start();
             let hi = period.end_exclusive();
@@ -206,8 +211,9 @@ impl SupabaseBackend {
 
     fn entry_from_json(v: &Value) -> Entry {
         let kind_str = v["kind"].as_str().unwrap_or("expense");
+        let id = v["entry_id"].as_i64().or_else(|| v["id"].as_i64()).unwrap_or(0);
         Entry {
-            id: v["id"].as_i64().unwrap_or(0),
+            id,
             date: v["date"].as_str().unwrap_or("").to_string(),
             kind: EntryKind::from_str(kind_str).unwrap_or(EntryKind::Expense),
             amount: v["amount"].as_f64().unwrap_or(0.0),
@@ -290,6 +296,24 @@ impl LedgerBackend for SupabaseBackend {
             .iter()
             .map(Self::account_from_json)
             .collect())
+    }
+
+    fn find_account_by_name(&self, name: &str) -> Result<Option<AccountBalance>> {
+        let q = vec![
+            ("select".to_string(), "id,name,kind,target_amount,credit_limit,liquid,archived".to_string()),
+            ("name".to_string(), format!("eq.{name}")),
+        ];
+        let v = self.call(reqwest::Method::GET, "/rest/v1/accounts", &q, None, None)?;
+        let arr = v.as_array();
+        if arr.is_none_or(|a| a.is_empty()) {
+            return Ok(None);
+        }
+        let account = Self::account_from_json(&arr.unwrap()[0]);
+        // Need entries to derive balance
+        let entries = self.entries(&EntryFilter::default())?;
+        Ok(crate::storage::ledger::derive_balances(&[account], &entries)
+            .into_iter()
+            .next())
     }
 
     fn entries(&self, f: &EntryFilter) -> Result<Vec<Entry>> {
@@ -427,7 +451,7 @@ impl LedgerBackend for SupabaseBackend {
 
     fn get_entry(&self, id: i64) -> Result<Entry> {
         let q = vec![
-            ("select".to_string(), "*".to_string()),
+            ("select".to_string(), "id,date,kind,amount,from_account_id,to_account_id,concept,subconcept,description,from_account,to_account".to_string()),
             ("id".to_string(), format!("eq.{id}")),
         ];
         let v = self.call(reqwest::Method::GET, "/rest/v1/entries_view", &q, None, None)?;

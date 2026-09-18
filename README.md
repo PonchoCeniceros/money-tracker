@@ -7,6 +7,149 @@ Reemplaza un dashboard de Excel que se había vuelto engorroso de mantener. El E
 (`Dashboard_Financiero.xlsx`) queda como **referencia histórica de solo consulta** — ya no se importa
 nada de él; una base de datos nueva arranca vacía y se carga con `setup`.
 
+## Setup desde cero en una máquina nueva
+
+### 1. Prerequisitos
+
+```sh
+# Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
+# Node.js (para la GUI)
+# con nvm o desde nodejs.org
+
+# Supabase CLI (para aplicar las migraciones)
+brew install supabase/tap/supabase   # macOS
+# o: npm i -g supabase
+```
+
+### 2. Clonar y compilar
+
+```sh
+git clone <repo-url> money-tracker
+cd money-tracker
+cargo build --workspace
+```
+
+### 3. Crear el proyecto en Supabase
+
+1. Entra a [supabase.com](https://supabase.com) → New Project.
+2. Anota dos valores:
+   - **Project URL**: `https://<ref>.supabase.co`
+   - **Publishable key** (Project Settings → API → key `sb_publishable_*`)
+
+### 4. Aplicar las migraciones a Supabase
+
+```sh
+cd money-tracker
+supabase login
+supabase link --project-ref <tu-project-ref>
+supabase db push
+```
+
+Esto crea en el remoto: tablas, RLS, triggers, índices, la vista `account_balances` y los RPCs
+`apply_entries` / `pull_changes`.
+
+### 5. Configurar las credenciales (3 opciones, en orden de prioridad)
+
+**Opción A — Variables de entorno** (recomendada para scripts/CI):
+
+```sh
+export MONEY_TRACKER_SUPABASE_URL="https://<ref>.supabase.co"
+export MONEY_TRACKER_SUPABASE_KEY="sb_publishable_..."
+```
+
+**Opción B — Archivo de configuración** (persistente, 0600):
+
+```sh
+mkdir -p ~/.money-tracker
+cat > ~/.money-tracker/config.toml <<EOF
+supabase_url = "https://<ref>.supabase.co"
+supabase_publishable_key = "sb_publishable_..."
+EOF
+chmod 600 ~/.money-tracker/config.toml
+```
+
+**Opción C — Flags en `db remote login`** (solo para esa invocación):
+
+```sh
+money-tracker db remote login --url "https://<ref>.supabase.co" --key "sb_publishable_..."
+```
+
+### 6. Iniciar sesión
+
+```sh
+money-tracker db remote login
+```
+
+Te pedirá email + password de tu usuario de Supabase Auth. El **refresh token** se guarda en el
+llavero del SO (macOS Keychain / Windows Credential Manager / Linux Secret Service), con fallback a
+un archivo `0600` en sesiones headless. El **password nunca se persiste**.
+
+### 7. Verificar la conexión
+
+```sh
+money-tracker db remote status
+```
+
+Debe mostrar: `Modo: remoto (Supabase)`, `Sesión: activa`, `Revisión remota: 0`, `Espejo local: en
+revisión 0`.
+
+### 8. (Opcional) Migrar una base local existente
+
+Si ya traías datos en `~/.money-tracker/data.db`:
+
+```sh
+money-tracker db remote migrate          # si el remoto está vacío
+money-tracker db remote migrate --force  # si el remoto ya tiene datos
+```
+
+### 9. Ejecutar
+
+```sh
+# CLI
+money-tracker report
+
+# GUI (otra terminal)
+cd gui && pnpm install && pnpm tauri dev
+```
+
+**Notas clave**
+
+- **Nunca** uses la `service_role` key en la app — solo la `sb_publishable_*` (publishable/anon).
+- El refresh token no se comparte entre máquinas: en una máquina nueva copia `config.toml` y vuelve
+  a hacer `db remote login`.
+- `MONEY_TRACKER_DB=/ruta/otro.db` apunta el espejo/la base de pruebas a otro archivo sin tocar el
+  real.
+
+### Si no quieres el prompt del keyring en cada reinicio (macOS / Linux)
+
+La primera vez que la app accede al llavero del sistema, macOS (Keychain Access) o Linux
+(gnome-keyring/kwallet) te piden el password de tu usuario para autorizar el acceso. Es el **SO
+quien muestra el diálogo**, no la app — tu password nunca sale de ahí.
+
+**macOS** — permitir acceso permanente a tu binario:
+
+1. Abre **Keychain Access** (`Cmd+Space` → "Keychain Access")
+2. Busca `money-tracker` (filtro: "money-tracker" / cuenta "supabase_refresh_token")
+3. Doble clic → pestaña **Access Control**
+4. Marca **"Allow all applications to access this item"**
+   - O usa "Confirm before allowing access" y añade tu binario (`/ruta/a/money-tracker` o el de
+     `target/release/money-tracker` si lo instalaste en `/usr/local/bin`)
+
+**Linux (GNOME / gnome-keyring)** — desbloqueo automático al login:
+
+- Si usas **auto-login**: el keyring se queda bloqueado y pide password la primera vez.
+  Solución: establece un password en el keyring (Seahorse → "Passwords" → "Login" → Change
+  Password) y asegúrate de que tu gestor de sesión lo desbloquee al iniciar sesión (la mayoría lo
+  hace si el password del keyring = password de usuario).
+- En **KDE / kwallet**: KWalletManager → cartera "kdewallet" → "Change Password" → usa el mismo
+  password de usuario.
+
+**Windows** — Credential Manager no suele pedir confirmación recurrente; la entrada queda guardada
+bajo tu usuario.
+
 ## Uso
 
 ```
@@ -350,6 +493,48 @@ money-tracker db remote migrate [--force] [--yes]
 
 # Olvidar la sesión guardada
 money-tracker db remote logout
+```
+
+### Reiniciar / volver a migrar el remoto
+
+`db remote migrate --force` es **idempotente**: busca cuentas/concepts por nombre en el remoto,
+reusa IDs si ya existen, y solo inserta lo que falte. Puedes ejecutarlo tantas veces como quieras
+contra el mismo proyecto Supabase — añade/actualiza, no duplica.
+
+Si quieres **limpiar todo el remoto y empezar de cero** con una base SQLite más actualizada:
+
+**Opción A — Solo borrar datos (mantiene esquema y proyecto):**
+```sh
+# 1. Logout (opcional, limpia tu keyring local)
+money-tracker db remote logout
+
+# 2. En Supabase → SQL Editor, ejecuta:
+TRUNCATE entries, budgets, config, accounts, concepts, sync_state, tombstones RESTART IDENTITY CASCADE;
+INSERT INTO sync_state (id, revision) VALUES (1, 0) ON CONFLICT DO NOTHING;
+
+# 3. Login de nuevo + migración fresca
+money-tracker db remote login
+money-tracker db remote migrate --force --yes
+```
+
+**Opción B — Proyecto Supabase nuevo (reset total, esquema limpio):**
+```sh
+# 1. Supabase Dashboard → Settings → General → Delete project (o crea uno nuevo)
+# 2. Crea proyecto nuevo → anota URL + publishable key
+# 3. Actualiza ~/.money-tracker/config.toml con la nueva URL/key
+# 4. Aplica migraciones al proyecto nuevo:
+supabase link --project-ref <nuevo-ref>
+supabase db push
+
+# 5. Login + migración desde tu base local (o otra vía MONEY_TRACKER_DB)
+money-tracker db remote login
+money-tracker db remote migrate --force --yes
+```
+
+**Opción C — Migrar desde una base SQLite distinta:**
+```sh
+# Usa tu base más actualizada como fuente
+MONEY_TRACKER_DB=/ruta/a/otra.db cargo run -p money-tracker -- db remote migrate --force --yes
 ```
 
 ## Arquitectura

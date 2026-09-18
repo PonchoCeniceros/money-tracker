@@ -216,36 +216,55 @@ pub fn migrate_local_to_remote(
     local: &dyn LedgerBackend,
     remote: &dyn LedgerBackend,
 ) -> Result<MigrateSummary> {
+    eprintln!("[migrate] Starting concepts...");
     let concepts = local.list_concepts(None)?;
     for c in &concepts {
         if let Err(e) = remote.add_concept(&c.name, &c.concept_type) {
-            // concepts already seeded remotely are fine (idempotent-ish).
             if !matches!(e, AppError::Invalid(_)) && !format!("{e}").contains("duplicate") {
                 return Err(e);
             }
         }
     }
+    eprintln!("[migrate] Concepts done: {}", concepts.len());
 
     let accounts = local.raw_accounts(true)?;
     let mut id_map: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
     for a in &accounts {
-        let new_account = NewAccount {
-            name: a.name.clone(),
-            kind: a.kind,
-            target_amount: a.target_amount,
-            credit_limit: a.credit_limit,
-            liquid: a.liquid,
+        eprintln!("[migrate] Processing account: {} ({:?})", a.name, a.kind);
+        let remote_account = remote.find_account_by_name(&a.name)?;
+        let id = match remote_account {
+            Some(existing) => {
+                eprintln!("[migrate]   Found existing remote account id={}", existing.id);
+                if a.archived && !existing.archived {
+                    remote.set_archived(existing.id)?;
+                }
+                existing.id
+            }
+            None => {
+                let new_account = NewAccount {
+                    name: a.name.clone(),
+                    kind: a.kind,
+                    target_amount: a.target_amount,
+                    credit_limit: a.credit_limit,
+                    liquid: a.liquid,
+                };
+                let id = remote.insert_account(&new_account)?;
+                eprintln!("[migrate]   Inserted new remote account id={}", id);
+                if a.archived {
+                    remote.set_archived(id)?;
+                }
+                id
+            }
         };
-        // Migrate deliberately skips `archive_account` for archived rows —
-        // they must arrive archived so the one-emergency index stays true.
-        let id = remote.insert_account(&new_account)?;
-        if a.archived {
-            remote.set_archived(id)?;
-        }
         id_map.insert(a.id, id);
     }
+    eprintln!("[migrate] Accounts done: {}", accounts.len());
 
-    let entries = local.entries(&EntryFilter::default())?;
+    let mut entries = local.entries(&EntryFilter::default())?;
+    // Sort chronologically (oldest first) so deposits/transfers arrive before
+    // withdrawals that depend on them — RPC overdraft check sees prior inserts in same txn.
+    entries.sort_by(|a, b| a.date.cmp(&b.date).then(a.id.cmp(&b.id)));
+    eprintln!("[migrate] Pushing {} entries (sorted by date)...", entries.len());
     let mut batch = Vec::new();
     for e in &entries {
         let to = e.to_account_id.map(|id| *id_map.get(&id).unwrap_or(&0));
@@ -267,8 +286,10 @@ pub fn migrate_local_to_remote(
             description: e.description.clone(),
         });
     }
-    for chunk in batch.chunks(50) {
+    for (chunk_idx, chunk) in batch.chunks(50).enumerate() {
+        eprintln!("[migrate] Pushing chunk {} ({} entries)...", chunk_idx, chunk.len());
         remote.push_entries(chunk)?;
+        eprintln!("[migrate] Chunk {} done", chunk_idx);
     }
 
     let budgets = local.list_budgets(None)?;

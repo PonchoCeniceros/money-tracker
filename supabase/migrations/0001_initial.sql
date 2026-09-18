@@ -211,7 +211,7 @@ left join public.accounts ta on ta.id = e.to_account_id;
 -- ---------------------------------------------------------------------------
 create or replace function public.apply_entries(p_entries jsonb)
 returns table (
-  id              bigint,
+  entry_id        bigint,
   date            date,
   kind            text,
   amount          numeric,
@@ -306,7 +306,7 @@ begin
   end loop;
 
   return query
-    select e.id, e.date, e.kind, e.amount, e.from_account_id, e.to_account_id,
+    select e.id as entry_id, e.date, e.kind, e.amount, e.from_account_id, e.to_account_id,
            fa.name as from_account, ta.name as to_account,
            e.concept, e.subconcept, e.description
     from public.entries e
