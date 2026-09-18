@@ -108,6 +108,22 @@ impl NewAccount {
     }
 }
 
+/// Raw account row with no balance. Deliberately NOT the shape read by the
+/// rest of the crate — `AccountBalance` (with the derived balance) is. This
+/// exists so a backend can fetch/apply accounts without paying for (or
+/// trusting) balance math; derivation happens in `storage::ledger` from
+/// `Account + entries`, the single source of truth.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Account {
+    pub id: i64,
+    pub name: String,
+    pub kind: AccountKind,
+    pub target_amount: Option<f64>,
+    pub credit_limit: Option<f64>,
+    pub liquid: bool,
+    pub archived: bool,
+}
+
 /// The only shape ever read back for an account — always carries its
 /// derived balance. There is deliberately no `Account` without a balance:
 /// reading an account without its balance was how `buckets.current_balance`

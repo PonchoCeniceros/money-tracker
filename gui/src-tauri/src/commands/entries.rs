@@ -19,9 +19,9 @@ pub struct ExpenseInput {
 
 #[tauri::command]
 pub fn add_expense(state: State<AppState>, input: ExpenseInput) -> ApiResult<i64> {
-    let conn = state.conn.lock().unwrap();
+    let be = state.backend.lock().unwrap();
     Ok(entry_service::add_expense(
-        &conn,
+        &**be,
         &input.date,
         input.amount,
         input.from_account_id,
@@ -50,9 +50,9 @@ pub struct IncomeOutput {
 
 #[tauri::command]
 pub fn add_income(state: State<AppState>, input: IncomeInput) -> ApiResult<IncomeOutput> {
-    let mut conn = state.conn.lock().unwrap();
+    let be = state.backend.lock().unwrap();
     let result = entry_service::add_income_with_emergency_split(
-        &mut conn,
+        &**be,
         &input.date,
         input.amount,
         input.to_account_id,
@@ -77,9 +77,9 @@ pub struct TransferInput {
 
 #[tauri::command]
 pub fn add_transfer(state: State<AppState>, input: TransferInput) -> ApiResult<i64> {
-    let conn = state.conn.lock().unwrap();
+    let be = state.backend.lock().unwrap();
     Ok(entry_service::add_transfer(
-        &conn,
+        &**be,
         &input.date,
         input.amount,
         input.from_account_id,
@@ -99,7 +99,7 @@ pub struct EntryFilterInput {
 
 #[tauri::command]
 pub fn list_entries(state: State<AppState>, filter: EntryFilterInput) -> ApiResult<Vec<Entry>> {
-    let conn = state.conn.lock().unwrap();
+    let be = state.backend.lock().unwrap();
     let period = match filter.period {
         Some(p) => Some(Period::parse(&p)?),
         None => None,
@@ -114,8 +114,9 @@ pub fn list_entries(state: State<AppState>, filter: EntryFilterInput) -> ApiResu
         concept: filter.concept,
         account_id: filter.account_id,
         limit: filter.limit,
+        ..Default::default()
     };
-    Ok(entry_service::list(&conn, &f)?)
+    Ok(entry_service::list(&**be, &f)?)
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -131,7 +132,7 @@ pub struct EntryUpdateInput {
 
 #[tauri::command]
 pub fn update_entry(state: State<AppState>, id: i64, input: EntryUpdateInput) -> ApiResult<Entry> {
-    let conn = state.conn.lock().unwrap();
+    let be = state.backend.lock().unwrap();
     let upd = EntryUpdate {
         date: input.date,
         amount: input.amount,
@@ -141,12 +142,12 @@ pub fn update_entry(state: State<AppState>, id: i64, input: EntryUpdateInput) ->
         from_account_id: input.from_account_id,
         to_account_id: input.to_account_id,
     };
-    Ok(entry_service::update(&conn, id, &upd)?)
+    Ok(entry_service::update(&**be, id, &upd)?)
 }
 
 #[tauri::command]
 pub fn delete_entry(state: State<AppState>, id: i64) -> ApiResult<()> {
-    let conn = state.conn.lock().unwrap();
-    entry_service::delete(&conn, id)?;
+    let be = state.backend.lock().unwrap();
+    entry_service::delete(&**be, id)?;
     Ok(())
 }

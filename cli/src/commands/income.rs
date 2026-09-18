@@ -1,6 +1,5 @@
 use clap::Args;
 use dialoguer::{Confirm, FuzzySelect, Input};
-use money_core::db::open_db;
 use money_core::services::{account_service, entry_service};
 use money_core::Result;
 
@@ -29,7 +28,7 @@ pub struct IncomeArgs {
 }
 
 pub fn run(args: IncomeArgs) -> Result<()> {
-    let mut conn = open_db()?;
+    let be = helpers::backend()?;
     let any_given = args.amount.is_some() || args.concept.is_some();
     let mode = PromptMode::resolve(args.interactive, args.yes, any_given);
 
@@ -52,19 +51,16 @@ pub fn run(args: IncomeArgs) -> Result<()> {
     };
 
     let concept = match args.concept {
-        Some(c) => match helpers::resolve_concept(&conn, &c, "income") {
+        Some(c) => match helpers::resolve_concept(&*be, &c, "income") {
             Ok(resolved) => resolved,
             Err(_) if args.new_concept => {
-                conn.execute(
-                    "INSERT INTO concepts (name, concept_type) VALUES (?1, 'income')",
-                    rusqlite::params![c],
-                )?;
+                be.add_concept(&c, "income")?;
                 c
             }
             Err(e) => return Err(e),
         },
         None if mode.allows_prompt() => {
-            let concepts = helpers::get_concept_names(&conn, "income")?;
+            let concepts = helpers::get_concept_names(&*be, "income")?;
             let selection = helpers::map_dlg_err(
                 FuzzySelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
                     .with_prompt("Concept")
@@ -81,17 +77,10 @@ pub fn run(args: IncomeArgs) -> Result<()> {
     };
 
     let to = match args.to {
-        Some(t) => helpers::resolve_account(&conn, &t)?,
-        None => match conn
-            .query_row(
-                "SELECT value FROM config WHERE key = 'income_account'",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-        {
-            Some(name) => helpers::resolve_account(&conn, &name)?,
-            None => account_service::default_account(&conn)?,
+        Some(t) => helpers::resolve_account(&*be, &t)?,
+        None => match be.get_config("income_account")? {
+            Some(name) => helpers::resolve_account(&*be, &name)?,
+            None => account_service::default_account(&*be)?,
         },
     };
 
@@ -115,18 +104,12 @@ pub fn run(args: IncomeArgs) -> Result<()> {
 
     let date = helpers::parse_date(args.date.as_deref())?;
 
-    let emergency_pct: f64 = conn
-        .query_row(
-            "SELECT value FROM config WHERE key = 'emergency_pct'",
-            [],
-            |row| {
-                let v: String = row.get(0)?;
-                Ok(v.parse::<f64>().unwrap_or(10.0))
-            },
-        )
+    let emergency_pct: f64 = be
+        .get_config("emergency_pct")?
+        .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(10.0);
 
-    let emergency_account = account_service::emergency_account(&conn)?;
+    let emergency_account = account_service::emergency_account(&*be)?;
 
     let split = if args.no_emergency || emergency_account.is_none() || !to.liquid {
         false
@@ -145,7 +128,7 @@ pub fn run(args: IncomeArgs) -> Result<()> {
     };
 
     let result = entry_service::add_income_with_emergency_split(
-        &mut conn,
+        &*be,
         &date,
         amount,
         to.id,

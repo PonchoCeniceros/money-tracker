@@ -320,6 +320,38 @@ money-tracker db reset --yes
 money-tracker db reset --backup=false --yes
 ```
 
+## Sincronización con Supabase (opcional)
+
+Además del modo local, `money-tracker` puede usar **Supabase como ledger alojado** con un espejo
+local en SQLite. Sin configurar, todo funciona exactamente como antes (base local). Con una
+configuración remota, cada operación escribe al remoto y refresca el espejo local; la GUI además
+hace `poll` cada ~30 s. Revisa el manual en [specs/001-supabase-backend/quickstart.md](specs/001-supabase-backend/quickstart.md).
+
+- **Dónde vive la config**: `~/.money-tracker/config.toml` (0600) con `supabase_url` y
+  `supabase_publishable_key`. Las variables de entorno `MONEY_TRACKER_SUPABASE_URL` /
+  `MONEY_TRACKER_SUPABASE_KEY` ganan sobre el archivo (útiles para scripts de prueba).
+- **El espejo**: el archivo local (`MONEY_TRACKER_DB` o `~/.money-tracker/data.db`) sigue siendo el
+  mismo de siempre — en modo remoto actúa como espejo de solo lectura de lo que hay en Supabase.
+- **Sesión**: el refresh token va al llavero del sistema (con fallback a un archivo `0600`);
+  el password jamás se persiste.
+
+```sh
+# Ver el estado: modo (local/remoto), sesión, revisión remota y watermark del espejo
+money-tracker db remote status
+
+# Iniciar sesión (guarda url/key si los pasas; usa los ya configurados si no)
+money-tracker db remote login [--url https://xxx.supabase.co --key <anon>]
+
+# Traer cambios remotos al espejo de una vez (lo que la GUI hace cada 30 s)
+money-tracker db remote sync
+
+# Subir una base local existente a Supabase (remapea ids, comprueba el remoto vacío salvo --force)
+money-tracker db remote migrate [--force] [--yes]
+
+# Olvidar la sesión guardada
+money-tracker db remote logout
+```
+
 ## Arquitectura
 
 Workspace con dos crates:

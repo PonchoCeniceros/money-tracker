@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { accountsApi } from "../api/accounts";
 import { configApi } from "../api/config";
 import { conceptsApi } from "../api/concepts";
+import { syncApi } from "../api/sync";
 import { useApi, bumpRevision } from "../hooks/useApi";
 import { Field } from "../components/Field";
 import { ErrorBanner } from "../components/ErrorBanner";
@@ -15,6 +16,8 @@ export default function Settings() {
   return (
     <div>
       <h1>Ajustes</h1>
+
+      <SyncCard />
 
       <ErrorBanner message={config.error} />
       <div className={ui.card}>
@@ -76,6 +79,127 @@ export default function Settings() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function SyncCard() {
+  const status = useApi(() => syncApi.status());
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const s = status.data;
+
+  async function login(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await syncApi.login({ email, password });
+      setEmail("");
+      setPassword("");
+      bumpRevision();
+      status.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function logout() {
+    setBusy(true);
+    try {
+      await syncApi.logout();
+      bumpRevision();
+      status.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function syncNow() {
+    setBusy(true);
+    try {
+      await syncApi.poll();
+      bumpRevision();
+      status.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!s) {
+    return <ErrorBanner message={status.error} />;
+  }
+
+  if (!s.remote_configured) {
+    return (
+      <div className={ui.card}>
+        <h3>Sincronización</h3>
+        <p className={ui.muted}>
+          Modo local — esta instalación guarda todo en el archivo de la máquina.
+          Para sincronizar entre dispositivos, configura Supabase (URL + publishable key)
+          en <code>~/.money-tracker/config.toml</code> o con las variables de entorno{" "}
+          <code>MONEY_TRACKER_SUPABASE_URL</code>/<code>MONEY_TRACKER_SUPABASE_KEY</code>.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={ui.card}>
+      <h3>Sincronización (Supabase)</h3>
+      <ErrorBanner message={error} />
+
+      {s.logged_in ? (
+        <div>
+          <p className={ui.muted}>
+            Sesión iniciada{ s.email ? ` como ${s.email}` : ""}.
+            {s.remote_revision != null && ` Revisión remota: ${s.remote_revision}.`}
+            {s.mirror_cursor != null && ` Espejo local: revisión ${s.mirror_cursor}.`}
+          </p>
+          {s.warning && <ErrorBanner message={s.warning} />}
+          <div className={ui.row}>
+            <button className={ui.button} disabled={busy} onClick={syncNow}>
+              Sincronizar ahora
+            </button>
+            <button className={ui.buttonSecondary} disabled={busy} onClick={logout}>
+              Cerrar sesión
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form className={ui.grid} onSubmit={login} style={{ marginTop: 8 }}>
+          <Field label="Email">
+            <input
+              className={ui.input}
+              type="email"
+              value={email}
+              autoComplete="username"
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </Field>
+          <Field label="Contraseña">
+            <input
+              className={ui.input}
+              type="password"
+              value={password}
+              autoComplete="current-password"
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </Field>
+          <button className={ui.button} disabled={busy} type="submit" style={{ alignSelf: "end" }}>
+            Iniciar sesión
+          </button>
+        </form>
+      )}
     </div>
   );
 }

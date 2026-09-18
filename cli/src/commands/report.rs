@@ -1,8 +1,9 @@
 use clap::Args;
-use money_core::db::open_db;
 use money_core::period::Period;
 use money_core::services::report_service;
 use money_core::Result;
+
+use crate::commands::helpers;
 use tabled::settings::object::Rows;
 use tabled::settings::{Alignment, Style};
 use tabled::Table;
@@ -33,13 +34,13 @@ struct ConceptRow {
 }
 
 pub fn run(args: ReportArgs) -> Result<()> {
-    let conn = open_db()?;
+    let be = helpers::backend()?;
     let period = match args.period {
         Some(p) => Period::parse(&p)?,
         None => Period::current(),
     };
 
-    let status = report_service::full_status(&conn, &period)?;
+    let status = report_service::full_status(&*be, &period)?;
     let r = &status.report;
     let nw = &status.net_worth;
 

@@ -1,8 +1,18 @@
 use chrono::{Duration, Local};
 use money_core::error::AppError;
-use money_core::models::AccountBalance;
+use money_core::models::{AccountBalance, Concept};
 use money_core::services::account_service;
-use money_core::{period, Result};
+use money_core::sync::production_backend;
+use money_core::{period, LedgerBackend, Result};
+
+/// The production ledger for this invocation: Supabase (mirror-synced) when
+/// remote config is present, otherwise the plain local SQLite file. Auth is
+/// handled inside the backend — a stored refresh token is resumed
+/// automatically and a missing one fails with a clear `db remote login`
+/// hint.
+pub fn backend() -> Result<Box<dyn LedgerBackend>> {
+    production_backend(&money_core::Settings::load())
+}
 
 /// Replaces the old all-or-nothing `interactive` heuristic (pre-redesign
 /// `add.rs:33-39`), which gated *some* optional prompts on "every field is
@@ -53,19 +63,16 @@ pub fn map_dlg_err<T>(r: std::result::Result<T, dialoguer::Error>) -> Result<T> 
     r.map_err(|e| AppError::Config(e.to_string()))
 }
 
-pub fn get_concept_names(conn: &rusqlite::Connection, type_filter: &str) -> Result<Vec<String>> {
-    let mut stmt =
-        conn.prepare("SELECT name FROM concepts WHERE concept_type IN (?1, 'both') ORDER BY name")?;
-    let rows = stmt.query_map(rusqlite::params![type_filter], |row| row.get::<_, String>(0))?;
-    let mut names = Vec::new();
-    for row in rows {
-        names.push(row?);
-    }
-    Ok(names)
+pub fn get_concept_names(be: &dyn LedgerBackend, type_filter: &str) -> Result<Vec<String>> {
+    Ok(be
+        .list_concepts(Some(type_filter))?
+        .into_iter()
+        .map(|c: Concept| c.name)
+        .collect())
 }
 
-pub fn get_account_names(conn: &rusqlite::Connection) -> Result<Vec<String>> {
-    Ok(account_service::list_accounts(conn, false)?
+pub fn get_account_names(be: &dyn LedgerBackend) -> Result<Vec<String>> {
+    Ok(account_service::list_accounts(be, false)?
         .into_iter()
         .map(|a| a.name)
         .collect())
@@ -74,8 +81,8 @@ pub fn get_account_names(conn: &rusqlite::Connection) -> Result<Vec<String>> {
 /// Resolves a user-typed account name against existing accounts:
 /// exact case-insensitive match first, then a unique case-insensitive
 /// prefix match. Ambiguous or absent matches error with the candidate list.
-pub fn resolve_account(conn: &rusqlite::Connection, given: &str) -> Result<AccountBalance> {
-    let accounts = account_service::list_accounts(conn, false)?;
+pub fn resolve_account(be: &dyn LedgerBackend, given: &str) -> Result<AccountBalance> {
+    let accounts = account_service::list_accounts(be, false)?;
     let needle = given.to_lowercase();
 
     if let Some(exact) = accounts.iter().find(|a| a.name.to_lowercase() == needle) {
@@ -112,8 +119,8 @@ pub fn resolve_account(conn: &rusqlite::Connection, given: &str) -> Result<Accou
 /// restricted to concepts usable for `type_filter` ("expense"/"income").
 /// A typo like "Alimento" now fails loudly with a suggestion instead of
 /// silently creating a new report row.
-pub fn resolve_concept(conn: &rusqlite::Connection, given: &str, type_filter: &str) -> Result<String> {
-    let candidates = get_concept_names(conn, type_filter)?;
+pub fn resolve_concept(be: &dyn LedgerBackend, given: &str, type_filter: &str) -> Result<String> {
+    let candidates = get_concept_names(be, type_filter)?;
     let needle = given.to_lowercase();
 
     if let Some(exact) = candidates.iter().find(|c| c.to_lowercase() == needle) {

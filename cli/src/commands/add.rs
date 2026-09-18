@@ -1,6 +1,5 @@
 use clap::Args;
 use dialoguer::{FuzzySelect, Input};
-use money_core::db::open_db;
 use money_core::period::Period;
 use money_core::services::{account_service, entry_service, report_service};
 use money_core::Result;
@@ -29,7 +28,7 @@ pub struct AddArgs {
 }
 
 pub fn run(args: AddArgs) -> Result<()> {
-    let conn = open_db()?;
+    let be = helpers::backend()?;
     let any_given = args.amount.is_some() || args.concept.is_some();
     let mode = PromptMode::resolve(args.interactive, args.yes, any_given);
 
@@ -52,19 +51,16 @@ pub fn run(args: AddArgs) -> Result<()> {
     };
 
     let concept = match args.concept {
-        Some(c) => match helpers::resolve_concept(&conn, &c, "expense") {
+        Some(c) => match helpers::resolve_concept(&*be, &c, "expense") {
             Ok(resolved) => resolved,
             Err(_) if args.new_concept => {
-                conn.execute(
-                    "INSERT INTO concepts (name, concept_type) VALUES (?1, 'expense')",
-                    rusqlite::params![c],
-                )?;
+                be.add_concept(&c, "expense")?;
                 c
             }
             Err(e) => return Err(e),
         },
         None if mode.allows_prompt() => {
-            let concepts = helpers::get_concept_names(&conn, "expense")?;
+            let concepts = helpers::get_concept_names(&*be, "expense")?;
             let selection = helpers::map_dlg_err(
                 FuzzySelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
                     .with_prompt("Concept")
@@ -81,8 +77,8 @@ pub fn run(args: AddArgs) -> Result<()> {
     };
 
     let from = match args.from {
-        Some(f) => helpers::resolve_account(&conn, &f)?,
-        None => account_service::default_account(&conn)?,
+        Some(f) => helpers::resolve_account(&*be, &f)?,
+        None => account_service::default_account(&*be)?,
     };
 
     let subconcept = match args.subconcept {
@@ -124,7 +120,7 @@ pub fn run(args: AddArgs) -> Result<()> {
     let date = helpers::parse_date(args.date.as_deref())?;
 
     let entry_id = entry_service::add_expense(
-        &conn,
+        &*be,
         &date,
         amount,
         from.id,
@@ -140,7 +136,7 @@ pub fn run(args: AddArgs) -> Result<()> {
 
     // Budgets are informative only: warn on overrun, never block.
     if let Ok(period) = Period::from_date(&date) {
-        if let Ok(report) = report_service::monthly_report(&conn, &period) {
+        if let Ok(report) = report_service::monthly_report(&*be, &period) {
             if let Some(budget) = report.budgets.iter().find(|b| b.concept == concept) {
                 if budget.pct > 100.0 {
                     println!(

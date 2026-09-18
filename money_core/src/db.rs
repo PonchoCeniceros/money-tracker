@@ -3,22 +3,168 @@ use std::path::PathBuf;
 
 use crate::error::{AppError, Result};
 
-const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
+
+/// The always-available concept vocabulary, seeded on any fresh database.
+pub const SEED_CONCEPTS: &[(&str, &str)] = &[
+    ("Discrecional", "expense"),
+    ("Transporte", "expense"),
+    ("Servicios", "expense"),
+    ("Alimentos", "expense"),
+    ("Extraordinario", "expense"),
+    ("Sandbox Inversión", "expense"),
+    ("Nomina", "income"),
+    ("Vales de Despensa", "income"),
+    ("Ahorro Patronal", "income"),
+    ("Extra", "income"),
+];
+
+/// SQLite DDL shared by the mirror database and every in-memory test
+/// backend. Kept as one string so a reviewer can diff it against
+/// `supabase/migrations/0001_initial.sql` — the two stores must enforce the
+/// same constraints.
+pub const CREATE_SCHEMA_SQL: &str = "
+    CREATE TABLE concepts (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        name          TEXT    NOT NULL UNIQUE,
+        concept_type  TEXT    NOT NULL CHECK(concept_type IN ('expense', 'income', 'both')),
+        user_id       TEXT,
+        updated_at    TEXT,
+        rev           INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE accounts (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        name          TEXT    NOT NULL UNIQUE,
+        kind          TEXT    NOT NULL
+                      CHECK (kind IN ('spending','emergency','target','credit')),
+        target_amount REAL    CHECK (target_amount IS NULL OR target_amount > 0),
+        credit_limit  REAL    CHECK (credit_limit  IS NULL OR credit_limit  > 0),
+        liquid        INTEGER NOT NULL DEFAULT 1 CHECK (liquid   IN (0,1)),
+        archived      INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
+        user_id       TEXT,
+        updated_at    TEXT,
+        rev           INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+
+        CHECK (kind =  'target' OR target_amount IS NULL),
+        CHECK (kind =  'credit' OR credit_limit  IS NULL)
+    );
+
+    -- at most one active emergency account
+    CREATE UNIQUE INDEX idx_accounts_one_emergency
+        ON accounts(kind) WHERE kind = 'emergency' AND archived = 0;
+
+    CREATE TABLE entries (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        date            TEXT    NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
+        kind            TEXT    NOT NULL
+                        CHECK (kind IN ('income','expense','transfer','opening')),
+        amount          REAL    NOT NULL CHECK (amount > 0),
+        from_account_id INTEGER REFERENCES accounts(id),
+        to_account_id   INTEGER REFERENCES accounts(id),
+        concept         TEXT    REFERENCES concepts(name) ON UPDATE CASCADE,
+        subconcept      TEXT,
+        description     TEXT,
+        user_id         TEXT,
+        updated_at      TEXT,
+        rev             INTEGER NOT NULL DEFAULT 0,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+
+        CHECK (
+            (kind IN ('income','opening')
+                 AND from_account_id IS NULL     AND to_account_id IS NOT NULL)
+         OR (kind = 'expense'
+                 AND from_account_id IS NOT NULL AND to_account_id IS NULL)
+         OR (kind = 'transfer'
+                 AND from_account_id IS NOT NULL AND to_account_id IS NOT NULL
+                 AND from_account_id <> to_account_id)
+        ),
+        CHECK (kind IN ('transfer', 'opening') OR concept IS NOT NULL)
+    );
+
+    CREATE INDEX idx_entries_date         ON entries(date);
+    CREATE INDEX idx_entries_kind_date    ON entries(kind, date);
+    CREATE INDEX idx_entries_concept_date ON entries(concept, date) WHERE kind = 'expense';
+    CREATE INDEX idx_entries_from ON entries(from_account_id) WHERE from_account_id IS NOT NULL;
+    CREATE INDEX idx_entries_to   ON entries(to_account_id)   WHERE to_account_id   IS NOT NULL;
+
+    CREATE VIEW account_balances AS
+    SELECT a.id, a.name, a.kind, a.target_amount, a.credit_limit, a.liquid, a.archived,
+           COALESCE(m.balance, 0.0) AS balance
+    FROM accounts a
+    LEFT JOIN (
+        SELECT account_id, ROUND(SUM(delta), 2) AS balance
+        FROM (
+            SELECT to_account_id   AS account_id,  amount AS delta
+              FROM entries WHERE to_account_id   IS NOT NULL
+            UNION ALL
+            SELECT from_account_id AS account_id, -amount AS delta
+              FROM entries WHERE from_account_id IS NOT NULL
+        ) GROUP BY account_id
+    ) m ON m.account_id = a.id;
+
+    CREATE VIEW entries_view AS
+    SELECT e.*, fa.name AS from_account, ta.name AS to_account
+    FROM entries e
+    LEFT JOIN accounts fa ON fa.id = e.from_account_id
+    LEFT JOIN accounts ta ON ta.id = e.to_account_id;
+
+    CREATE TABLE budgets (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        concept       TEXT NOT NULL REFERENCES concepts(name) ON UPDATE CASCADE,
+        monthly_limit REAL NOT NULL CHECK (monthly_limit > 0),
+        period        TEXT NOT NULL CHECK (period IS strftime('%Y-%m', period || '-01')),
+        user_id       TEXT,
+        updated_at    TEXT,
+        rev           INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (concept, period)
+    );
+
+    CREATE TABLE config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        user_id       TEXT,
+        updated_at    TEXT,
+        rev           INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE sync_state (
+        id              INTEGER PRIMARY KEY CHECK (id = 1),
+        revision        INTEGER NOT NULL DEFAULT 0,
+        mirror_revision INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO sync_state (id, revision, mirror_revision) VALUES (1, 0, 0);
+";
 
 pub fn open_db() -> Result<Connection> {
-    let path = db_path();
+    open_db_at(&db_path())
+}
+
+/// Opens a SQLite database at `path`, creating/migrating it to the current
+/// schema version. Shared by `open_db`, the mirror (`SqliteBackend::open_at`)
+/// and the v1→Supabase migration — one code path for every schema decision.
+pub fn open_db_at(path: &std::path::Path) -> Result<Connection> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let conn = Connection::open(&path)?;
+    let conn = Connection::open(path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
     let version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     match version {
         v if v == SCHEMA_VERSION => {}
-        0 if is_legacy_schema(&conn)? => return Err(AppError::LegacySchema { path }),
+        0 if is_legacy_schema(&conn)? => return Err(AppError::LegacySchema { path: path.to_path_buf() }),
         0 => {
             init_schema(&conn)?;
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        }
+        // v1 -> v2 is additive-only (user_id/updated_at/rev columns plus the
+        // sync_state table); a fresh v2 DB and a migrated one are
+        // indistinguishable, so real existing data survives cleanly.
+        1 => {
+            migrate_v1_to_v2(&conn)?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
         v if v > SCHEMA_VERSION => {
@@ -31,6 +177,35 @@ pub fn open_db() -> Result<Connection> {
     }
 
     Ok(conn)
+}
+
+fn migrate_v1_to_v2(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "
+        ALTER TABLE accounts ADD COLUMN user_id TEXT;
+        ALTER TABLE accounts ADD COLUMN updated_at TEXT;
+        ALTER TABLE accounts ADD COLUMN rev INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE entries ADD COLUMN user_id TEXT;
+        ALTER TABLE entries ADD COLUMN updated_at TEXT;
+        ALTER TABLE entries ADD COLUMN rev INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE budgets ADD COLUMN user_id TEXT;
+        ALTER TABLE budgets ADD COLUMN updated_at TEXT;
+        ALTER TABLE budgets ADD COLUMN rev INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE concepts ADD COLUMN user_id TEXT;
+        ALTER TABLE concepts ADD COLUMN updated_at TEXT;
+        ALTER TABLE concepts ADD COLUMN rev INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE config ADD COLUMN user_id TEXT;
+        ALTER TABLE config ADD COLUMN updated_at TEXT;
+        ALTER TABLE config ADD COLUMN rev INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE sync_state (
+            id              INTEGER PRIMARY KEY CHECK (id = 1),
+            revision        INTEGER NOT NULL DEFAULT 0,
+            mirror_revision INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO sync_state (id, revision, mirror_revision) VALUES (1, 0, 0);
+        ",
+    )?;
+    Ok(())
 }
 
 /// Path to the SQLite database file. Honors `MONEY_TRACKER_DB` so tests and
@@ -72,118 +247,12 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
 }
 
 fn create_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "
-        CREATE TABLE concepts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            concept_type TEXT NOT NULL CHECK(concept_type IN ('expense', 'income', 'both')),
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE accounts (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            name          TEXT    NOT NULL UNIQUE,
-            kind          TEXT    NOT NULL
-                          CHECK (kind IN ('spending','emergency','target','credit')),
-            target_amount REAL    CHECK (target_amount IS NULL OR target_amount > 0),
-            credit_limit  REAL    CHECK (credit_limit  IS NULL OR credit_limit  > 0),
-            liquid        INTEGER NOT NULL DEFAULT 1 CHECK (liquid   IN (0,1)),
-            archived      INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
-            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
-
-            CHECK (kind =  'target' OR target_amount IS NULL),
-            CHECK (kind =  'credit' OR credit_limit  IS NULL)
-        );
-
-        -- at most one active emergency account
-        CREATE UNIQUE INDEX idx_accounts_one_emergency
-            ON accounts(kind) WHERE kind = 'emergency' AND archived = 0;
-
-        CREATE TABLE entries (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            date            TEXT    NOT NULL CHECK (date IS strftime('%Y-%m-%d', date)),
-            kind            TEXT    NOT NULL
-                            CHECK (kind IN ('income','expense','transfer','opening')),
-            amount          REAL    NOT NULL CHECK (amount > 0),
-            from_account_id INTEGER REFERENCES accounts(id),
-            to_account_id   INTEGER REFERENCES accounts(id),
-            concept         TEXT    REFERENCES concepts(name) ON UPDATE CASCADE,
-            subconcept      TEXT,
-            description     TEXT,
-            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
-
-            CHECK (
-                (kind IN ('income','opening')
-                     AND from_account_id IS NULL     AND to_account_id IS NOT NULL)
-             OR (kind = 'expense'
-                     AND from_account_id IS NOT NULL AND to_account_id IS NULL)
-             OR (kind = 'transfer'
-                     AND from_account_id IS NOT NULL AND to_account_id IS NOT NULL
-                     AND from_account_id <> to_account_id)
-            ),
-            CHECK (kind IN ('transfer', 'opening') OR concept IS NOT NULL)
-        );
-
-        CREATE INDEX idx_entries_date         ON entries(date);
-        CREATE INDEX idx_entries_kind_date    ON entries(kind, date);
-        CREATE INDEX idx_entries_concept_date ON entries(concept, date) WHERE kind = 'expense';
-        CREATE INDEX idx_entries_from ON entries(from_account_id) WHERE from_account_id IS NOT NULL;
-        CREATE INDEX idx_entries_to   ON entries(to_account_id)   WHERE to_account_id   IS NOT NULL;
-
-        CREATE VIEW account_balances AS
-        SELECT a.id, a.name, a.kind, a.target_amount, a.credit_limit, a.liquid, a.archived,
-               COALESCE(m.balance, 0.0) AS balance
-        FROM accounts a
-        LEFT JOIN (
-            SELECT account_id, ROUND(SUM(delta), 2) AS balance
-            FROM (
-                SELECT to_account_id   AS account_id,  amount AS delta
-                  FROM entries WHERE to_account_id   IS NOT NULL
-                UNION ALL
-                SELECT from_account_id AS account_id, -amount AS delta
-                  FROM entries WHERE from_account_id IS NOT NULL
-            ) GROUP BY account_id
-        ) m ON m.account_id = a.id;
-
-        CREATE VIEW entries_view AS
-        SELECT e.*, fa.name AS from_account, ta.name AS to_account
-        FROM entries e
-        LEFT JOIN accounts fa ON fa.id = e.from_account_id
-        LEFT JOIN accounts ta ON ta.id = e.to_account_id;
-
-        CREATE TABLE budgets (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            concept       TEXT NOT NULL REFERENCES concepts(name) ON UPDATE CASCADE,
-            monthly_limit REAL NOT NULL CHECK (monthly_limit > 0),
-            period        TEXT NOT NULL CHECK (period IS strftime('%Y-%m', period || '-01')),
-            UNIQUE (concept, period)
-        );
-
-        CREATE TABLE config (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        ",
-    )?;
+    conn.execute_batch(CREATE_SCHEMA_SQL)?;
     Ok(())
 }
 
 fn seed_concepts(conn: &Connection) -> Result<()> {
-    let concepts = [
-        ("Discrecional", "expense"),
-        ("Transporte", "expense"),
-        ("Servicios", "expense"),
-        ("Alimentos", "expense"),
-        ("Extraordinario", "expense"),
-        ("Sandbox Inversión", "expense"),
-        ("Nomina", "income"),
-        ("Vales de Despensa", "income"),
-        ("Ahorro Patronal", "income"),
-        ("Extra", "income"),
-    ];
-
-    for (name, ctype) in &concepts {
+    for (name, ctype) in SEED_CONCEPTS {
         conn.execute(
             "INSERT OR IGNORE INTO concepts (name, concept_type) VALUES (?1, ?2)",
             rusqlite::params![name, ctype],
@@ -200,19 +269,6 @@ fn seed_config(conn: &Connection) -> Result<()> {
     // default_account / income_account / cash_concept are left unset until
     // the user has created accounts (`account add` / `config set`).
     Ok(())
-}
-
-/// Test-only helper shared across `services/*`'s own `#[cfg(test)]` modules,
-/// so every service's tests build the schema the same way `open_db` does.
-#[cfg(test)]
-pub(crate) mod test_support {
-    use rusqlite::Connection;
-
-    pub(crate) fn create_schema_for_tests(conn: &Connection) {
-        super::create_schema(conn).unwrap();
-        super::seed_concepts(conn).unwrap();
-        super::seed_config(conn).unwrap();
-    }
 }
 
 #[cfg(test)]

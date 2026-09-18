@@ -8,8 +8,8 @@ use crate::state::AppState;
 
 #[tauri::command]
 pub fn list_accounts(state: State<AppState>, include_archived: bool) -> ApiResult<Vec<AccountBalance>> {
-    let conn = state.conn.lock().unwrap();
-    Ok(account_service::list_accounts(&conn, include_archived)?)
+    let be = state.backend.lock().unwrap();
+    Ok(account_service::list_accounts(&**be, include_archived)?)
 }
 
 #[derive(serde::Deserialize)]
@@ -23,7 +23,7 @@ pub struct NewAccountInput {
 
 #[tauri::command]
 pub fn create_account(state: State<AppState>, input: NewAccountInput) -> ApiResult<i64> {
-    let conn = state.conn.lock().unwrap();
+    let be = state.backend.lock().unwrap();
     let kind = AccountKind::from_str(&input.kind)?;
     let new_account = match kind {
         AccountKind::Spending => NewAccount::spending(&input.name),
@@ -36,13 +36,13 @@ pub fn create_account(state: State<AppState>, input: NewAccountInput) -> ApiResu
     } else {
         new_account
     };
-    Ok(account_service::create_account(&conn, &new_account)?)
+    Ok(account_service::create_account(&**be, &new_account)?)
 }
 
 #[tauri::command]
 pub fn archive_account(state: State<AppState>, id: i64, force: bool) -> ApiResult<()> {
-    let conn = state.conn.lock().unwrap();
-    account_service::archive_account(&conn, id, force)?;
+    let be = state.backend.lock().unwrap();
+    account_service::archive_account(&**be, id, force)?;
     Ok(())
 }
 
@@ -60,8 +60,8 @@ pub fn reconcile_account(
     concept: String,
     date: String,
 ) -> ApiResult<ReconcileOutput> {
-    let conn = state.conn.lock().unwrap();
-    let result = account_service::reconcile_account(&conn, id, actual, &concept, &date)?;
+    let be = state.backend.lock().unwrap();
+    let result = account_service::reconcile_account(&**be, id, actual, &concept, &date)?;
     Ok(ReconcileOutput {
         entry_id: result.entry_id,
         diff: result.diff,

@@ -36,6 +36,10 @@ pub fn run() {
             commands::config::list_config,
             commands::setup::is_seeded,
             commands::setup::seed,
+            commands::sync::sync_status,
+            commands::sync::sync_poll,
+            commands::sync::remote_login,
+            commands::sync::remote_logout,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

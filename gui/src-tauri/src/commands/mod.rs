@@ -6,3 +6,4 @@ pub mod config;
 pub mod entries;
 pub mod report;
 pub mod setup;
+pub mod sync;

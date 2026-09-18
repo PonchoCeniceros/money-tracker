@@ -1,7 +1,6 @@
-use rusqlite::Connection;
-
 use crate::error::{AppError, Result};
-use crate::services::{account_service, entry_service};
+use crate::models::NewEntry;
+use crate::storage::LedgerBackend;
 
 pub struct SeedOptions {
     /// (account name, opening balance) pairs.
@@ -16,58 +15,55 @@ pub struct SeedSummary {
 
 /// Whether the database already has any entries. `setup` refuses to run
 /// again on a non-fresh DB unless `--force` overrides this at the CLI layer.
-pub fn is_seeded(conn: &Connection) -> Result<bool> {
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |row| row.get(0))?;
-    Ok(count > 0)
+pub fn is_seeded(be: &dyn LedgerBackend) -> Result<bool> {
+    be.is_seeded()
 }
 
 /// Writes opening-balance entries (`kind = 'opening'`, excluded from income
-/// totals) for each account in `opts.accounts`. All-or-nothing.
-pub fn seed(conn: &mut Connection, opts: &SeedOptions) -> Result<SeedSummary> {
+/// totals) for each account in `opts.accounts`. All-or-nothing via a single
+/// atomic `push_entries` batch.
+pub fn seed(be: &dyn LedgerBackend, opts: &SeedOptions) -> Result<SeedSummary> {
     if opts.accounts.is_empty() {
         return Err(AppError::Invalid("No opening balances given".into()));
     }
 
-    let tx = conn.transaction()?;
+    let mut batch = Vec::new();
     let mut seeded = Vec::new();
     for (name, amount) in &opts.accounts {
         if *amount <= 0.0 {
             continue;
         }
-        let account = account_service::require_by_name(&tx, name)?;
-        entry_service::add_opening(&tx, &opts.date, *amount, account.id)?;
+        let account = be.require_account_by_name(name)?;
+        batch.push(NewEntry::opening(&opts.date, *amount, account.id)?);
         seeded.push((name.clone(), *amount));
     }
-    tx.commit()?;
 
+    be.push_entries(&batch)?;
     Ok(SeedSummary { seeded })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db;
     use crate::models::NewAccount;
-    use crate::services::report_service;
     use crate::period::Period;
+    use crate::services::{account_service, report_service};
+    use crate::storage::sqlite::SqliteBackend;
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        db::test_support::create_schema_for_tests(&conn);
-        conn
+    fn setup_db() -> SqliteBackend {
+        SqliteBackend::open_memory().unwrap()
     }
 
     #[test]
     fn seed_does_not_count_as_income() {
-        let mut conn = setup_db();
-        account_service::create_account(&conn, &NewAccount::spending("efectivo")).unwrap();
-        account_service::create_account(&conn, &NewAccount::emergency("fondo")).unwrap();
+        let be = setup_db();
+        account_service::create_account(&be, &NewAccount::spending("efectivo")).unwrap();
+        account_service::create_account(&be, &NewAccount::emergency("fondo")).unwrap();
 
-        assert!(!is_seeded(&conn).unwrap());
+        assert!(!is_seeded(&be).unwrap());
 
         seed(
-            &mut conn,
+            &be,
             &SeedOptions {
                 accounts: vec![("efectivo".into(), 1000.0), ("fondo".into(), 35000.0)],
                 date: "2026-08-01".into(),
@@ -75,13 +71,13 @@ mod tests {
         )
         .unwrap();
 
-        assert!(is_seeded(&conn).unwrap());
+        assert!(is_seeded(&be).unwrap());
 
         let period = Period::parse("2026-08").unwrap();
-        let report = report_service::monthly_report(&conn, &period).unwrap();
+        let report = report_service::monthly_report(&be, &period).unwrap();
         assert_eq!(report.total_income, 0.0);
 
-        let efectivo = account_service::require_by_name(&conn, "efectivo").unwrap();
+        let efectivo = account_service::require_by_name(&be, "efectivo").unwrap();
         assert_eq!(efectivo.balance, 1000.0);
     }
 }

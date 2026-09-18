@@ -21,6 +21,10 @@ impl From<AppError> for ApiError {
             AppError::LegacySchema { .. } => "legacy_schema",
             AppError::SchemaTooNew { .. } => "schema_too_new",
             AppError::SchemaTooOld { .. } => "schema_too_old",
+            AppError::Remote(_) => "remote",
+            AppError::Network(_) => "network",
+            AppError::Auth(_) => "auth",
+            AppError::InvalidGrant => "auth_needed",
         };
         ApiError {
             kind: kind.to_string(),

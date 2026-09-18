@@ -7,8 +7,8 @@ use crate::state::AppState;
 
 #[tauri::command]
 pub fn is_seeded(state: State<AppState>) -> ApiResult<bool> {
-    let conn = state.conn.lock().unwrap();
-    Ok(setup_service::is_seeded(&conn)?)
+    let be = state.backend.lock().unwrap();
+    Ok(setup_service::is_seeded(&**be)?)
 }
 
 #[derive(serde::Deserialize)]
@@ -24,9 +24,9 @@ pub struct SeedOutput {
 
 #[tauri::command]
 pub fn seed(state: State<AppState>, input: SeedInput) -> ApiResult<SeedOutput> {
-    let mut conn = state.conn.lock().unwrap();
+    let be = state.backend.lock().unwrap();
     let summary = setup_service::seed(
-        &mut conn,
+        &**be,
         &SeedOptions {
             accounts: input.accounts,
             date: input.date,

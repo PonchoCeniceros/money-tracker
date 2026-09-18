@@ -25,6 +25,20 @@ pub enum AppError {
     SchemaTooNew { found: i32, expected: i32 },
     #[error("Database schema version {found} is older than this build supports and cannot be auto-upgraded.")]
     SchemaTooOld { found: i32 },
+    /// A logic/state error surfaced by the remote (Supabase) backend — e.g.
+    /// an upsert rejected by a trigger or CHECK constraint.
+    #[error("Remote error: {0}")]
+    Remote(String),
+    /// Network/connection failure talking to Supabase.
+    #[error("Network error: {0}")]
+    Network(#[from] reqwest::Error),
+    /// Sign-in / session validation problem.
+    #[error("Auth error: {0}")]
+    Auth(String),
+    /// The stored refresh token was revoked or expired ("invalid_grant"):
+    /// caller must re-prompt for credentials rather than retry.
+    #[error("Session expired — please log in again (db remote login)")]
+    InvalidGrant,
 }
 
 pub type Result<T> = std::result::Result<T, AppError>;

@@ -1,6 +1,5 @@
 use clap::Args;
 use dialoguer::{Confirm, Input};
-use money_core::db::open_db;
 use money_core::period::Period;
 use money_core::services::{account_service, setup_service};
 use money_core::services::setup_service::SeedOptions;
@@ -31,9 +30,9 @@ fn parse_account_amount(s: &str) -> std::result::Result<(String, f64), String> {
 }
 
 pub fn run(args: SetupArgs) -> Result<()> {
-    let mut conn = open_db()?;
+    let be = helpers::backend()?;
 
-    if setup_service::is_seeded(&conn)? && !args.force {
+    if setup_service::is_seeded(&*be)? && !args.force {
         eprintln!("La base de datos ya tiene movimientos.");
         if args.yes {
             return Ok(());
@@ -58,7 +57,7 @@ pub fn run(args: SetupArgs) -> Result<()> {
     let accounts = if !args.accounts.is_empty() {
         args.accounts
     } else {
-        let existing = account_service::list_accounts(&conn, false)?;
+        let existing = account_service::list_accounts(&*be, false)?;
         if existing.is_empty() {
             eprintln!("No hay cuentas. Crea al menos una con `money-tracker account add`.");
             return Ok(());
@@ -83,7 +82,7 @@ pub fn run(args: SetupArgs) -> Result<()> {
         return Ok(());
     }
 
-    let summary = setup_service::seed(&mut conn, &SeedOptions { accounts, date: date.clone() })?;
+    let summary = setup_service::seed(&*be, &SeedOptions { accounts, date: date.clone() })?;
 
     println!("✓ Saldos iniciales cargados ({date})");
     for (name, amount) in &summary.seeded {

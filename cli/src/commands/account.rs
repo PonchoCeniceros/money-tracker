@@ -1,6 +1,5 @@
 use clap::{Args, Subcommand};
 use dialoguer::{Input, Select};
-use money_core::db::open_db;
 use money_core::models::{AccountKind, NewAccount};
 use money_core::services::account_service;
 use money_core::Result;
@@ -77,7 +76,7 @@ pub fn run(args: AccountArgs) -> Result<()> {
 const KIND_OPTIONS: [&str; 4] = ["spending", "emergency", "target", "credit"];
 
 fn add(args: AddArgs) -> Result<()> {
-    let conn = open_db()?;
+    let be = helpers::backend()?;
     let any_given = args.name.is_some() || args.kind.is_some();
     let mode = PromptMode::resolve(false, args.yes, any_given);
 
@@ -166,14 +165,14 @@ fn add(args: AddArgs) -> Result<()> {
         new_account
     };
 
-    account_service::create_account(&conn, &new_account)?;
+    account_service::create_account(&*be, &new_account)?;
     println!("✓ Cuenta '{name}' creada ({kind_str})");
     Ok(())
 }
 
 fn list(args: ListArgs) -> Result<()> {
-    let conn = open_db()?;
-    let accounts = account_service::list_accounts(&conn, args.all)?;
+    let be = helpers::backend()?;
+    let accounts = account_service::list_accounts(&*be, args.all)?;
 
     if accounts.is_empty() {
         println!("No accounts yet. Create one with `money-tracker account add`");
@@ -217,24 +216,24 @@ fn list(args: ListArgs) -> Result<()> {
 }
 
 fn archive(args: ArchiveArgs) -> Result<()> {
-    let conn = open_db()?;
+    let be = helpers::backend()?;
     let name = match args.name {
         Some(n) => n,
         None => helpers::map_dlg_err(Input::new().with_prompt("Account name").interact_text())?,
     };
-    let account = helpers::resolve_account(&conn, &name)?;
-    account_service::archive_account(&conn, account.id, args.force)?;
+    let account = helpers::resolve_account(&*be, &name)?;
+    account_service::archive_account(&*be, account.id, args.force)?;
     println!("✓ Cuenta '{}' archivada", account.name);
     Ok(())
 }
 
 fn reconcile(args: ReconcileArgs) -> Result<()> {
-    let conn = open_db()?;
+    let be = helpers::backend()?;
     let name = match args.name {
         Some(n) => n,
         None => helpers::map_dlg_err(Input::new().with_prompt("Account name").interact_text())?,
     };
-    let account = helpers::resolve_account(&conn, &name)?;
+    let account = helpers::resolve_account(&*be, &name)?;
 
     let actual = match args.actual {
         Some(a) => a,
@@ -245,23 +244,19 @@ fn reconcile(args: ReconcileArgs) -> Result<()> {
         )?,
     };
 
-    let default_concept = conn
-        .query_row(
-            "SELECT value FROM config WHERE key = 'cash_concept'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .unwrap_or_else(|_| "Discrecional".to_string());
+    let default_concept = be
+        .get_config("cash_concept")?
+        .unwrap_or_else(|| "Discrecional".to_string());
 
     let concept = match args.concept {
         Some(c) => c,
         None => default_concept,
     };
-    let concept = helpers::resolve_concept(&conn, &concept, "expense")?;
+    let concept = helpers::resolve_concept(&*be, &concept, "expense")?;
 
     let date = helpers::parse_date(args.date.as_deref())?;
 
-    let result = account_service::reconcile_account(&conn, account.id, actual, &concept, &date)?;
+    let result = account_service::reconcile_account(&*be, account.id, actual, &concept, &date)?;
 
     match result.entry_id {
         None => println!("✓ Sin diferencia — '{}' ya está en ${actual:.2}", account.name),

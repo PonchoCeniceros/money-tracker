@@ -8,13 +8,13 @@ use crate::state::AppState;
 
 #[tauri::command]
 pub fn monthly_report(state: State<AppState>, period: String) -> ApiResult<MonthlyReport> {
-    let conn = state.conn.lock().unwrap();
+    let be = state.backend.lock().unwrap();
     let p = Period::parse(&period)?;
-    Ok(report_service::monthly_report(&conn, &p)?)
+    Ok(report_service::monthly_report(&**be, &p)?)
 }
 
 #[tauri::command]
 pub fn net_worth(state: State<AppState>, as_of: Option<String>) -> ApiResult<NetWorth> {
-    let conn = state.conn.lock().unwrap();
-    Ok(report_service::net_worth(&conn, as_of.as_deref())?)
+    let be = state.backend.lock().unwrap();
+    Ok(report_service::net_worth(&**be, as_of.as_deref())?)
 }

@@ -4,7 +4,6 @@
 //! emergency/target); this module is left with only the two movements.
 use clap::{Args, Subcommand};
 use dialoguer::{FuzzySelect, Input};
-use money_core::db::open_db;
 use money_core::services::{account_service, entry_service};
 use money_core::Result;
 
@@ -57,11 +56,11 @@ pub fn run(args: BucketArgs) -> Result<()> {
     }
 }
 
-fn pick_bucket_name(conn: &rusqlite::Connection, given: Option<String>) -> Result<String> {
+fn pick_bucket_name(be: &dyn money_core::LedgerBackend, given: Option<String>) -> Result<String> {
     match given {
         Some(b) => Ok(b),
         None => {
-            let buckets: Vec<String> = account_service::list_accounts(conn, false)?
+            let buckets: Vec<String> = account_service::list_accounts(be, false)?
                 .into_iter()
                 .filter(|a| {
                     matches!(
@@ -94,9 +93,9 @@ fn prompt_amount() -> Result<f64> {
 }
 
 fn deposit(args: DepositArgs) -> Result<()> {
-    let conn = open_db()?;
-    let bucket_name = pick_bucket_name(&conn, args.bucket)?;
-    let bucket = helpers::resolve_account(&conn, &bucket_name)?;
+    let be = helpers::backend()?;
+    let bucket_name = pick_bucket_name(&*be, args.bucket)?;
+    let bucket = helpers::resolve_account(&*be, &bucket_name)?;
 
     let amount = match args.amount {
         Some(a) if a > 0.0 => a,
@@ -108,14 +107,14 @@ fn deposit(args: DepositArgs) -> Result<()> {
     };
 
     let from = match args.from {
-        Some(f) => helpers::resolve_account(&conn, &f)?,
-        None => account_service::default_account(&conn)?,
+        Some(f) => helpers::resolve_account(&*be, &f)?,
+        None => account_service::default_account(&*be)?,
     };
 
     let date = helpers::parse_date(args.date.as_deref())?;
 
-    entry_service::add_transfer(&conn, &date, amount, from.id, bucket.id, None)?;
-    let new_balance = account_service::get_account(&conn, bucket.id)?;
+    entry_service::add_transfer(&*be, &date, amount, from.id, bucket.id, None)?;
+    let new_balance = account_service::get_account(&*be, bucket.id)?;
 
     println!(
         "✓ ${amount:.2} depositado a '{}' (saldo: ${:.2})",
@@ -133,9 +132,9 @@ fn deposit(args: DepositArgs) -> Result<()> {
 }
 
 fn withdraw(args: WithdrawArgs) -> Result<()> {
-    let conn = open_db()?;
-    let bucket_name = pick_bucket_name(&conn, args.bucket)?;
-    let bucket = helpers::resolve_account(&conn, &bucket_name)?;
+    let be = helpers::backend()?;
+    let bucket_name = pick_bucket_name(&*be, args.bucket)?;
+    let bucket = helpers::resolve_account(&*be, &bucket_name)?;
 
     let amount = match args.amount {
         Some(a) if a > 0.0 => a,
@@ -147,13 +146,13 @@ fn withdraw(args: WithdrawArgs) -> Result<()> {
     };
 
     let to = match args.to {
-        Some(t) => helpers::resolve_account(&conn, &t)?,
-        None => account_service::default_account(&conn)?,
+        Some(t) => helpers::resolve_account(&*be, &t)?,
+        None => account_service::default_account(&*be)?,
     };
 
     let date = helpers::parse_date(args.date.as_deref())?;
 
-    entry_service::add_transfer(&conn, &date, amount, bucket.id, to.id, None)?;
+    entry_service::add_transfer(&*be, &date, amount, bucket.id, to.id, None)?;
 
     println!("✓ ${amount:.2} movido de '{}' a '{}'", bucket.name, to.name);
     println!(

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { accountsApi } from "./api/accounts";
 import { useApi, useRefetchOnFocus, bumpRevision } from "./hooks/useApi";
+import { useSync } from "./hooks/useSync";
 import Dashboard from "./routes/Dashboard";
 import Register from "./routes/Register";
 import Accounts from "./routes/Accounts";
@@ -24,6 +25,7 @@ const TABS: { id: View; label: string }[] = [
 
 function App() {
   useRefetchOnFocus();
+  useSync();
   const [view, setView] = useState<View>("dashboard");
   const [spinning, setSpinning] = useState(false);
   const accounts = useApi(() => accountsApi.list(false));
