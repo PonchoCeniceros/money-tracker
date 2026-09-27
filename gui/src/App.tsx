@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { accountsApi } from "./api/accounts";
 import { ApiCallError } from "./api/client";
 import { CONNECT_KINDS, syncApi } from "./api/sync";
+import { backupApi } from "./api/backup";
 import { useApi, useRefetchOnFocus, bumpRevision } from "./hooks/useApi";
 import { useSync } from "./hooks/useSync";
 import Dashboard from "./routes/Dashboard";
@@ -56,6 +57,23 @@ function App() {
   useEffect(() => {
     checkConnection();
   }, [checkConnection]);
+
+  // Lazy automatic backup, once connected: never blocks the UI, only reports.
+  const [backupNotice, setBackupNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    if (connection.state !== "ok") return;
+    backupApi
+      .auto()
+      .then((info) => {
+        if (info) setBackupNotice({ ok: true, text: `Respaldo automático: ${info.path}` });
+      })
+      .catch((e) =>
+        setBackupNotice({
+          ok: false,
+          text: `No se pudo hacer el respaldo automático (${e instanceof Error ? e.message : e}). Se reintentará la próxima vez.`,
+        })
+      );
+  }, [connection.state]);
 
   function refresh() {
     bumpRevision();
@@ -121,6 +139,16 @@ function App() {
         </button>
       </nav>
       <main className={styles.main}>
+        {backupNotice && (
+          <div
+            className={backupNotice.ok ? ui.notice : ui.error}
+            onClick={() => setBackupNotice(null)}
+            title="Clic para cerrar"
+            style={{ cursor: "pointer", marginBottom: 12 }}
+          >
+            {backupNotice.text}
+          </div>
+        )}
         {view === "dashboard" && <Dashboard />}
         {view === "register" && <Register />}
         {view === "accounts" && <Accounts />}

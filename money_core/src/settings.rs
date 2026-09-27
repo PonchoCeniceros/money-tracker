@@ -148,6 +148,16 @@ pub fn config_dir() -> PathBuf {
     PathBuf::from(home).join(".money-tracker")
 }
 
+/// Where backups go by default: `~/.money-tracker/backups/`.
+pub fn backups_dir() -> PathBuf {
+    config_dir().join("backups")
+}
+
+/// Date and path of the last successful backup: `~/.money-tracker/last-backup.toml`.
+pub fn last_backup_path() -> PathBuf {
+    config_dir().join("last-backup.toml")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

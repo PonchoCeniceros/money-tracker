@@ -236,7 +236,7 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
 
 ### Tests for User Story 2
 
-- [ ] T036 [P] [US2] Primero: en `money_core/src/services/backup_service.rs`, `#[cfg(test)]`, pruebas de
+- [X] T036 [P] [US2] Primero: en `money_core/src/services/backup_service.rs`, `#[cfg(test)]`, pruebas de
       `render_sql(snapshot, email)` con un `LedgerSnapshot` fijo, comparando contra un texto esperado completo. Cubren
       todo lo de "Estructura del archivo" y "Reglas de generación" de
       [backup-contract.md](contracts/backup-contract.md):
@@ -245,10 +245,10 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
       - `insert` en orden concepts → accounts → entries → budgets → config; filas por `id` ascendente;
       - `O'Brien` → `'O''Brien'`; `null`; `true`/`false`; `f64` exacto;
       - una tabla vacía no genera `insert`; líneas `setval` por tabla; `begin;`/`commit;`.
-- [ ] T037 [P] [US2] Primero: pruebas de `is_due(now, record)` (sin registro → `true`; exactamente 7 días → `false`; 7
+- [X] T037 [P] [US2] Primero: pruebas de `is_due(now, record)` (sin registro → `true`; exactamente 7 días → `false`; 7
       días + 1 s → `true`; registro ilegible → se trata como ausente) y del registro `last-backup.toml` (ida y vuelta
       con `at` RFC 3339, `path`, `revision` y `schema_version`) en `money_core/src/services/backup_service.rs`.
-- [ ] T038 [P] [US2] Primero: pruebas de escritura en `backup_service.rs`, usando `std::env::temp_dir()` con un
+- [X] T038 [P] [US2] Primero: pruebas de escritura en `backup_service.rs`, usando `std::env::temp_dir()` con un
       subdirectorio único por prueba:
       - un nombre existente recibe el sufijo `-2`; nunca se sobrescribe;
       - permisos `0600`;
@@ -258,9 +258,9 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
 
 ### Implementation for User Story 2
 
-- [ ] T039 [US2] En `money_core/src/settings.rs`, agregar `backups_dir()` (`config_dir()/backups`) y
+- [X] T039 [US2] En `money_core/src/settings.rs`, agregar `backups_dir()` (`config_dir()/backups`) y
       `last_backup_path()` (`config_dir()/last-backup.toml`).
-- [ ] T040 [US2] Implementar `money_core/src/services/backup_service.rs` (r9, r10,
+- [X] T040 [US2] Implementar `money_core/src/services/backup_service.rs` (r9, r10,
       [backup-contract.md](contracts/backup-contract.md)) y registrarlo en `services/mod.rs`. T036–T038 pasan:
       - `render_sql(&LedgerSnapshot, email: &str) -> String`;
       - `create(be, dest: Option<&Path>) -> Result<BackupInfo>`: `export_snapshot` → `render_sql` con
@@ -269,24 +269,29 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
       - `is_due(now: DateTime<Local>, record: Option<&LastBackupRecord>) -> bool`;
       - `run_auto_if_due(now, connect: impl FnOnce() -> Result<Box<dyn LedgerBackend>>) ->
         Option<Result<BackupInfo>>`, que solo llama a `connect` si `is_due`.
-- [ ] T041 [US2] En `cli/src/commands/db.rs`, agregar `Backup { #[arg(short = 'o', long)] output: Option<PathBuf> }` →
+- [X] T041 [US2] En `cli/src/commands/db.rs`, agregar `Backup { #[arg(short = 'o', long)] output: Option<PathBuf> }` →
       `backup_service::create`, que imprime `Respaldo: <ruta> (N movimientos)`. En `Remote Status`, la línea "Último
       respaldo" sale de `read_record()` (o `—`).
-- [ ] T042 [US2] En `cli/src/main.rs:40-61`, después del `match`, solo si `result.is_ok()` y el comando no es `Db(Backup)`,
+- [X] T042 [US2] En `cli/src/main.rs:40-61`, después del `match`, solo si `result.is_ok()` y el comando no es `Db(Backup)`,
       `Db(Remote(Login))` ni `Db(Remote(Logout))`: llamar a `backup_service::run_auto_if_due(Local::now(),
       commands::helpers::backend)`. Imprimir en stderr los mensajes de éxito o falla de
       [backup-contract.md](contracts/backup-contract.md); omitir en silencio si el error es `NotConfigured`; **nunca**
       cambiar el código de salida.
-- [ ] T043 [US2] Crear `gui/src-tauri/src/commands/backup.rs` con `backup_create { dest?: String } -> BackupInfo` y
+- [X] T043 [US2] Crear `gui/src-tauri/src/commands/backup.rs` con `backup_create { dest?: String } -> BackupInfo` y
       `backup_auto() -> Option<BackupInfo>`, usando `with_backend`. Agregar `last_backup` a `connection_info`
       (`commands/sync.rs`). Registrar en `gui/src-tauri/src/lib.rs` y declarar en `commands/mod.rs`.
-- [ ] T044 [US2] En el frontend: crear `gui/src/api/backup.ts`; en `gui/src/routes/Settings.tsx`, tarjeta **Respaldo**
+- [X] T044 [US2] En el frontend: crear `gui/src/api/backup.ts`; en `gui/src/routes/Settings.tsx`, tarjeta **Respaldo**
       (botón "Respaldar ahora", fecha y ruta del último respaldo, campo de ruta opcional); en `gui/src/App.tsx`, después
       de pasar el gate de conexión, llamar a `backup_auto()` sin bloquear el render y mostrar un aviso breve de éxito o
       advertencia. Regenerar los bindings (`BackupInfo`) y correr `npx tsc --noEmit`.
-- [ ] T045 [US2] **(manual)** Validar quickstart §4, §5 y §6 (simulacro de restauración en el proyecto de prueba, con
+- [X] T045 [US2] **(manual)** Validar quickstart §4, §5 y §6 (simulacro de restauración en el proyecto de prueba, con
       `diff` de reportes por período) y el punto de respaldo de §7. Registrar el tiempo del simulacro (SC-005: menos
       de 15 min).
+      **Hecho (2026-09-26) en un Supabase local** (`supabase start` en `/tmp/mt-local`), porque no habrá proyecto de
+      prueba: se borró la base con los usuarios, se aplicaron `0001` y `0002`, se creó el usuario con otro id, se
+      restauró el respaldo, y reportes, cuentas, movimientos y presupuestos salieron idénticos en 40 s. También se
+      comprobó que la app sigue escribiendo y que restaurar dos veces o con otra versión de esquema se rechaza.
+      Pendiente del usuario: el botón "Respaldar ahora" y el aviso automático en la GUI.
 
 **Checkpoint**: respaldos manuales y automáticos funcionando, y un respaldo restaurado con cifras idénticas.
 

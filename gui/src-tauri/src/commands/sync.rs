@@ -5,6 +5,7 @@ use tauri::State;
 
 use money_core::auth::SupabaseAuth;
 use money_core::models::LedgerStatus;
+use money_core::services::backup_service::{self, LastBackupRecord};
 use money_core::settings::save_settings;
 use money_core::Settings;
 
@@ -25,6 +26,7 @@ pub struct ConnectionInfo {
     pub email: Option<String>,
     /// "llavero del sistema" or "archivo".
     pub token_storage: String,
+    pub last_backup: Option<LastBackupRecord>,
 }
 
 /// What Settings shows about the connection. Never fails: an unreachable or
@@ -49,6 +51,7 @@ pub fn connection_info(state: State<AppState>) -> ApiResult<ConnectionInfo> {
         logged_in,
         email,
         token_storage: auth.storage().label().to_string(),
+        last_backup: backup_service::last_backup(),
     })
 }
 

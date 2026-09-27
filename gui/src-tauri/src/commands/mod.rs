@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod accounts;
 pub mod budgets;
 pub mod buckets;

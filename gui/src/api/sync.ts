@@ -11,6 +11,7 @@ export interface ConnectionInfo {
   email: string | null;
   /** "llavero del sistema" | "archivo" */
   token_storage: string;
+  last_backup: { at: string; path: string; revision: number; schema_version: number } | null;
 }
 
 export interface LoginInput {

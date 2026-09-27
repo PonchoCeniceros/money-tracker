@@ -3,6 +3,7 @@ import { accountsApi } from "../api/accounts";
 import { configApi } from "../api/config";
 import { conceptsApi } from "../api/concepts";
 import { syncApi } from "../api/sync";
+import { backupApi } from "../api/backup";
 import { useApi, bumpRevision } from "../hooks/useApi";
 import { Field } from "../components/Field";
 import { ErrorBanner } from "../components/ErrorBanner";
@@ -18,6 +19,7 @@ export default function Settings() {
       <h1>Ajustes</h1>
 
       <SyncCard />
+      <BackupCard />
 
       <ErrorBanner message={config.error} />
       <div className={ui.card}>
@@ -136,6 +138,65 @@ function SyncCard() {
       <div className={ui.row} style={{ marginTop: 8 }}>
         <button className={ui.buttonSecondary} disabled={busy} onClick={logout}>
           Cerrar sesión
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BackupCard() {
+  const info = useApi(() => syncApi.connectionInfo());
+  const [dest, setDest] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function backupNow() {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const r = await backupApi.create(dest.trim() || undefined);
+      setDone(`Respaldo creado: ${r.path} (${r.entries} movimientos)`);
+      info.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const last = info.data?.last_backup;
+  return (
+    <div className={ui.card}>
+      <h3>Respaldo</h3>
+      <p className={ui.muted}>
+        Un archivo SQL con todo tu libro contable. Se restaura en un proyecto de Supabase nuevo (ver
+        supabase/README.md). Si el último tiene más de 7 días, se hace uno solo al abrir la app.
+      </p>
+      <p>
+        Último respaldo:{" "}
+        {last ? (
+          <>
+            {new Date(last.at).toLocaleString()} · <code>{last.path}</code>
+          </>
+        ) : (
+          "nunca"
+        )}
+      </p>
+      <ErrorBanner message={error} />
+      {done && <div className={ui.notice}>{done}</div>}
+      <div className={ui.grid} style={{ marginTop: 8 }}>
+        <Field label="Carpeta o archivo (opcional)">
+          <input
+            className={ui.input}
+            placeholder="~/.money-tracker/backups/"
+            value={dest}
+            onChange={(e) => setDest(e.target.value)}
+          />
+        </Field>
+        <button className={ui.button} disabled={busy} onClick={backupNow} style={{ alignSelf: "end" }}>
+          {busy ? "Respaldando…" : "Respaldar ahora"}
         </button>
       </div>
     </div>

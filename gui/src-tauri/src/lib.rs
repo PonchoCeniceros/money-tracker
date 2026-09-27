@@ -34,6 +34,8 @@ pub fn run() {
             commands::config::list_config,
             commands::setup::is_seeded,
             commands::setup::seed,
+            commands::backup::backup_create,
+            commands::backup::backup_auto,
             commands::sync::ledger_status,
             commands::sync::connection_info,
             commands::sync::remote_login,

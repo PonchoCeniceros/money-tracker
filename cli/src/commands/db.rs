@@ -2,6 +2,7 @@ use clap::{Args, Subcommand};
 use dialoguer::{Input, Password};
 use money_core::auth::SupabaseAuth;
 use money_core::schema::EXPECTED_SCHEMA_VERSION;
+use money_core::services::backup_service;
 use money_core::Result;
 use money_core::Settings;
 
@@ -10,23 +11,32 @@ use crate::commands::helpers;
 #[derive(Args)]
 pub struct DbArgs {
     #[command(subcommand)]
-    command: DbCommands,
+    pub command: DbCommands,
 }
 
 #[derive(Subcommand)]
-enum DbCommands {
+pub enum DbCommands {
+    /// Back up the whole ledger to a SQL file (restorable in a fresh Supabase project)
+    Backup(BackupArgs),
     /// Manage the Supabase connection (login, logout, status)
     Remote(RemoteArgs),
 }
 
 #[derive(Args)]
+pub struct BackupArgs {
+    /// Destination folder or new file (default: ~/.money-tracker/backups/)
+    #[arg(short = 'o', long)]
+    output: Option<std::path::PathBuf>,
+}
+
+#[derive(Args)]
 pub struct RemoteArgs {
     #[command(subcommand)]
-    command: RemoteCommands,
+    pub command: RemoteCommands,
 }
 
 #[derive(Subcommand)]
-enum RemoteCommands {
+pub enum RemoteCommands {
     /// Sign in and store the session (refresh token) + url/key
     Login(LoginArgs),
     /// Forget the stored session (keeps url/key so only a re-login is needed)
@@ -48,6 +58,7 @@ pub struct LoginArgs {
 
 pub fn run(args: DbArgs) -> Result<()> {
     match args.command {
+        DbCommands::Backup(b) => backup(b),
         DbCommands::Remote(a) => match a.command {
             RemoteCommands::Login(la) => remote_login(la),
             RemoteCommands::Logout => remote_logout(),
@@ -117,6 +128,7 @@ fn remote_status() -> Result<()> {
         _ => {
             println!("Conexión:        no configurada");
             println!("                 Corre: money-tracker db remote login --url … --key …");
+            print_last_backup();
             return Ok(());
         }
     };
@@ -146,6 +158,21 @@ fn remote_status() -> Result<()> {
             println!("                 {e}");
         }
     }
-    println!("Último respaldo: —");
+    print_last_backup();
+    Ok(())
+}
+
+fn print_last_backup() {
+    match backup_service::last_backup() {
+        Some(r) => println!("Último respaldo: {} · {}", r.at, r.path),
+        None => println!("Último respaldo: —"),
+    }
+}
+
+fn backup(args: BackupArgs) -> Result<()> {
+    let be = helpers::backend()?;
+    let info = backup_service::create(&*be, args.output.as_deref())?;
+    println!("✓ Respaldo: {} ({} movimientos)", info.path, info.entries);
+    println!("  Revisión {} · esquema versión {}", info.revision, info.schema_version);
     Ok(())
 }

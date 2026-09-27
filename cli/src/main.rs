@@ -39,6 +39,18 @@ enum Commands {
 
 fn main() {
     let cli = Cli::parse();
+    // `db backup` already backs up, and login/logout change the session the
+    // automatic backup would use, so none of them trigger it.
+    let auto_backup = !matches!(
+        &cli.command,
+        Commands::Db(commands::db::DbArgs {
+            command: commands::db::DbCommands::Backup(_)
+                | commands::db::DbCommands::Remote(commands::db::RemoteArgs {
+                    command: commands::db::RemoteCommands::Login(_)
+                        | commands::db::RemoteCommands::Logout,
+                }),
+        })
+    );
     let result = match cli.command {
         Commands::Add(args) => commands::add::run(args),
         Commands::Income(args) => commands::income::run(args),
@@ -57,5 +69,24 @@ fn main() {
     if let Err(e) = result {
         eprintln!("Error: {e}");
         std::process::exit(1);
+    }
+
+    if auto_backup {
+        run_auto_backup();
+    }
+}
+
+/// Lazy 7-day backup after a successful command. Never changes the exit code:
+/// a failure is a warning, and it is retried on the next command.
+fn run_auto_backup() {
+    use money_core::services::backup_service;
+    match backup_service::run_auto_if_due(chrono::Local::now(), commands::helpers::backend) {
+        None => {}
+        Some(Ok(info)) => eprintln!("Respaldo automático: {} ({} movimientos)", info.path, info.entries),
+        // Not configured: there's nothing to back up yet, so stay quiet.
+        Some(Err(money_core::AppError::NotConfigured(_))) => {}
+        Some(Err(e)) => eprintln!(
+            "Aviso: no se pudo hacer el respaldo automático ({e}). Se reintentará la próxima vez."
+        ),
     }
 }
