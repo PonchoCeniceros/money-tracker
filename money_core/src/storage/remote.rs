@@ -518,10 +518,14 @@ impl LedgerBackend for SupabaseBackend {
             "monthly_limit": limit,
             "period": period,
         });
+        // Upsert on the (user, concept, period) unique key. Without `on_conflict`,
+        // PostgREST resolves duplicates on the primary key (`id`), never matches,
+        // and the insert fails on the unique constraint instead of updating.
+        let q = vec![("on_conflict".to_string(), "user_id,concept,period".to_string())];
         self.call_unit(
             reqwest::Method::POST,
             "/rest/v1/budgets",
-            &[],
+            &q,
             Some(body),
             Some("resolution=merge-duplicates"),
         )
