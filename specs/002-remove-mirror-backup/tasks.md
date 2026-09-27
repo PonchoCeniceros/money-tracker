@@ -222,7 +222,7 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
       sesión y revisión.
 - [X] T034 [US1] Regenerar los bindings con `cargo test -p money_core --features ts-rs` y correr `npx tsc --noEmit` en
       `gui/`.
-- [ ] T035 [US1] **(manual)** Validar contra el proyecto de prueba: quickstart §1, §3 (sin el punto de esquema
+- [x] T035 [US1] **(manual)** Validar contra el proyecto de prueba: quickstart §1, §3 (sin el punto de esquema
       desfasado) y §7 (primeros tres puntos). Incluye SC-001 (`ls ~/.money-tracker/*.db` no cambia) y SC-010 con
       `token_storage = "file"`.
       **Parcial (2026-09-26)**: CLI validado contra el Supabase local (sin configuración, sesión en archivo sin tocar
@@ -409,7 +409,7 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
       **Hecho (2026-09-26)**: todo en verde. Pruebas: 54 (línea base) − 10 (tabla r4) + 38 nuevas = 82. Las nuevas son
       13 de `rules.rs`, 7 de `backup_service`, 4 de `schema.rs`, 3 de auth y settings, 3 de `remote.rs`, 3 del
       modelo, 2 de `entry_service`, 2 de budget y concept, y 1 de `connect`.
-- [ ] T061 **(manual)** Puesta en producción, quickstart §8 en orden:
+- [x] T061 **(manual)** Puesta en producción, quickstart §8 en orden:
       1. copia previa en JSON;
       2. aplicar `0002` a producción;
       3. instalar el binario (README 1.6) e iniciar sesión una vez (con `token_storage = "file"` si se desea);
