@@ -1,3 +1,4 @@
+import type { SplitPreview } from "../bindings/SplitPreview";
 import { call } from "./client";
 import type { Entry } from "../bindings/Entry";
 
@@ -58,4 +59,7 @@ export const entriesApi = {
   update: (id: number, input: EntryUpdateInput) =>
     call<Entry>("update_entry", { id, input }),
   remove: (id: number) => call<void>("delete_entry", { id }),
+  /** What the income would put in the emergency fund; `null` = no split. */
+  splitPreview: (toAccountId: number, amount: number) =>
+    call<SplitPreview | null>("income_split_preview", { toAccountId, amount }),
 };

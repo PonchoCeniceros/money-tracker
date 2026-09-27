@@ -116,7 +116,7 @@ fn set(args: SetArgs) -> Result<()> {
         None => helpers::map_dlg_err(
             Input::new()
                 .with_prompt("Monthly limit ($)")
-                .validate_with(|v: &f64| if *v > 0.0 { Ok(()) } else { Err("Limit must be positive") })
+                .validate_with(|v: &f64| money_core::rules::validate_budget_limit(*v).map_err(|e| e.to_string()))
                 .interact_text(),
         )?,
     };

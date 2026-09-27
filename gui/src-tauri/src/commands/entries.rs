@@ -151,3 +151,15 @@ pub fn delete_entry(state: State<AppState>, id: i64) -> ApiResult<()> {
     entry_service::delete(&**be, id)?;
     Ok(())
 }
+
+/// What an income of `amount` into `to_account_id` would put in the emergency
+/// fund (`null` = no split: restricted account, no fund, or nothing to split).
+#[tauri::command]
+pub fn income_split_preview(
+    state: State<AppState>,
+    to_account_id: i64,
+    amount: f64,
+) -> ApiResult<Option<entry_service::SplitPreview>> {
+    let be = state.backend()?;
+    Ok(entry_service::emergency_split_preview(&**be, to_account_id, amount)?)
+}

@@ -104,27 +104,21 @@ pub fn run(args: IncomeArgs) -> Result<()> {
 
     let date = helpers::parse_date(args.date.as_deref())?;
 
-    let emergency_pct: f64 = be
-        .get_config("emergency_pct")?
-        .and_then(|v| v.parse::<f64>().ok())
-        .unwrap_or(10.0);
-
-    let emergency_account = account_service::emergency_account(&*be)?;
-
-    let split = if args.no_emergency || emergency_account.is_none() || !to.liquid {
-        false
-    } else if mode == PromptMode::Wizard {
-        helpers::map_dlg_err(
+    // Whether (and how much) goes to the emergency fund is the domain's call.
+    let preview = entry_service::emergency_split_preview(&*be, to.id, amount)?;
+    let split = match &preview {
+        _ if args.no_emergency => false,
+        None => false,
+        Some(p) if mode == PromptMode::Wizard => helpers::map_dlg_err(
             Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
                 .with_prompt(format!(
-                    "Allocate {emergency_pct:.0}% (${:.2}) to emergency fund?",
-                    amount * emergency_pct / 100.0
+                    "Allocate {:.0}% (${:.2}) to '{}'?",
+                    p.pct, p.amount, p.fund
                 ))
                 .default(true)
                 .interact(),
-        )?
-    } else {
-        true
+        )?,
+        Some(_) => true,
     };
 
     let result = entry_service::add_income_with_emergency_split(
@@ -142,14 +136,14 @@ pub fn run(args: IncomeArgs) -> Result<()> {
         to.name, result.entry_id
     );
 
-    match result.emergency {
-        Some((fund_name, fund_amount)) => {
-            println!("  → ${fund_amount:.2} a '{fund_name}' ({emergency_pct:.0}%)")
+    match (result.emergency, &preview) {
+        (Some((fund_name, fund_amount)), Some(p)) => {
+            println!("  → ${fund_amount:.2} a '{fund_name}' ({:.0}%)", p.pct)
         }
-        None if !to.liquid && emergency_account.is_some() => {
+        (None, None) if !to.liquid => {
             println!("  (sin aporte a fondo: '{}' es una cuenta restringida)", to.name)
         }
-        None => {}
+        _ => {}
     }
 
     Ok(())

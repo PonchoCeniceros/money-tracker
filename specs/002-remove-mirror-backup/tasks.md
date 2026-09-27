@@ -352,13 +352,13 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
 
 **Independent Test**: quickstart §1, con el Wi-Fi apagado.
 
-- [ ] T053 [US4] En `cli/src/commands/income.rs:107-127`, reemplazar la lectura de `emergency_pct` y la decisión de si
+- [X] T053 [US4] En `cli/src/commands/income.rs:107-127`, reemplazar la lectura de `emergency_pct` y la decisión de si
       aplica el reparto por `entry_service::emergency_split_preview`; el texto de la pregunta usa `pct` y `amount` del
       resultado.
-- [ ] T054 [US4] En `gui/src-tauri/src/commands/entries.rs`, agregar `income_split_preview { to_account_id, amount } ->
+- [X] T054 [US4] En `gui/src-tauri/src/commands/entries.rs`, agregar `income_split_preview { to_account_id, amount } ->
       Option<SplitPreview>` y registrarlo en `lib.rs`. En `gui/src/api/entries.ts`, su wrapper. En
       `gui/src/routes/Register.tsx:309-313`, el aviso de reparto usa el resultado en lugar de deducirlo de `liquid`.
-- [ ] T055 [US4] Verificar una sola implementación: `grep -rn "Exceeds credit limit\|Insufficient balance\|Limit must be
+- [X] T055 [US4] Verificar una sola implementación: `grep -rn "Exceeds credit limit\|Insufficient balance\|Limit must be
       positive" --include=*.rs money_core cli gui/src-tauri` solo debe encontrar `money_core/src/rules.rs`. Con la red
       apagada, `time cargo test --workspace` pasa en menos de 10 s (SC-008).
 
