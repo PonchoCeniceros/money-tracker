@@ -101,10 +101,10 @@ mod tests {
     use super::*;
     use crate::models::NewAccount;
     use crate::services::{account_service, entry_service};
-    use crate::storage::sqlite::SqliteBackend;
+    use crate::storage::memory::MemoryBackend;
 
-    fn setup() -> SqliteBackend {
-        SqliteBackend::open_memory().unwrap()
+    fn setup() -> MemoryBackend {
+        MemoryBackend::seeded()
     }
 
     #[test]

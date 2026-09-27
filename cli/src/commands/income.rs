@@ -54,7 +54,7 @@ pub fn run(args: IncomeArgs) -> Result<()> {
         Some(c) => match helpers::resolve_concept(&*be, &c, "income") {
             Ok(resolved) => resolved,
             Err(_) if args.new_concept => {
-                be.add_concept(&c, "income")?;
+                money_core::services::concept_service::add(&*be, &c, "income")?;
                 c
             }
             Err(e) => return Err(e),

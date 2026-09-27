@@ -1,16 +1,82 @@
-use crate::error::Result;
-use crate::models::{Entry, NewEntry};
-use crate::storage::{round2, LedgerBackend};
+use std::collections::HashMap;
+
+use crate::error::{AppError, Result};
+use crate::models::{AccountBalance, Entry, EntryKind, NewEntry};
+use crate::rules;
+use crate::storage::LedgerBackend;
 
 // Re-exported because CLI/GUI import `EntryFilter`/`EntryUpdate` from here —
-// the canonical definitions live in `models` so the mirror/sync layer can
-// use them without a service dependency.
+// the canonical definitions live in `models` so the storage layer can use
+// them without a service dependency.
 pub use crate::models::{EntryFilter, EntryUpdate};
 
-/// Sole writer of `entries`. Every other constructor in this module funnels
-/// through `LedgerBackend::push_entries`, so the invariants encoded in
-/// `NewEntry`'s constructors (and the backend's atomic overdraft/credit
-/// checks) are the only path onto the ledger — on SQLite OR Supabase.
+const DEFAULT_EMERGENCY_PCT: f64 = 10.0;
+
+/// The only way entries reach a backend. Validates every entry's source
+/// against the overdraft rules, using balances already adjusted by the
+/// earlier entries of the same batch, then writes the batch atomically.
+pub(crate) fn push_checked(be: &dyn LedgerBackend, batch: &[NewEntry]) -> Result<Vec<Entry>> {
+    let needs_balances = batch
+        .iter()
+        .any(|e| matches!(e.kind, EntryKind::Expense | EntryKind::Transfer));
+    if needs_balances {
+        let mut balances: HashMap<i64, AccountBalance> =
+            be.list_accounts(true)?.into_iter().map(|a| (a.id, a)).collect();
+        for e in batch {
+            if matches!(e.kind, EntryKind::Expense | EntryKind::Transfer) {
+                let from = e
+                    .from_account_id
+                    .ok_or_else(|| AppError::Invalid("Entry must have a source account".into()))?;
+                let source = balances
+                    .get(&from)
+                    .ok_or_else(|| AppError::NotFound(format!("Account #{from} not found")))?;
+                rules::check_source(source, e.amount)?;
+            }
+            if let Some(a) = e.from_account_id.and_then(|id| balances.get_mut(&id)) {
+                a.balance -= e.amount;
+            }
+            if let Some(a) = e.to_account_id.and_then(|id| balances.get_mut(&id)) {
+                a.balance += e.amount;
+            }
+        }
+    }
+    be.push_entries(batch)
+}
+
+fn emergency_pct(be: &dyn LedgerBackend) -> Result<f64> {
+    Ok(be
+        .get_config("emergency_pct")?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_EMERGENCY_PCT))
+}
+
+/// What an income into `to` would auto-split into the emergency fund.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "../../gui/src/bindings/"))]
+pub struct SplitPreview {
+    pub pct: f64,
+    pub amount: f64,
+    pub fund: String,
+}
+
+/// Lets a handler ask the domain whether an income would be split, so the
+/// CLI prompt and the GUI hint never restate the rule themselves.
+pub fn emergency_split_preview(
+    be: &dyn LedgerBackend,
+    to: i64,
+    amount: f64,
+) -> Result<Option<SplitPreview>> {
+    let to_account = be.get_account(to)?;
+    let fund = be.emergency_account()?;
+    let pct = emergency_pct(be)?;
+    Ok(rules::emergency_split(&to_account, fund.as_ref(), pct, amount).map(|split| SplitPreview {
+        pct,
+        amount: split,
+        fund: fund.map(|f| f.name).unwrap_or_default(),
+    }))
+}
+
 pub fn add_income(
     be: &dyn LedgerBackend,
     date: &str,
@@ -20,7 +86,7 @@ pub fn add_income(
     description: Option<&str>,
 ) -> Result<i64> {
     let entry = NewEntry::income(date, amount, to, concept)?.with_description(description);
-    Ok(be.push_entries(&[entry])?[0].id)
+    Ok(push_checked(be, &[entry])?[0].id)
 }
 
 pub fn add_expense(
@@ -35,7 +101,7 @@ pub fn add_expense(
     let entry = NewEntry::expense(date, amount, from, concept)?
         .with_subconcept(subconcept)
         .with_description(description);
-    Ok(be.push_entries(&[entry])?[0].id)
+    Ok(push_checked(be, &[entry])?[0].id)
 }
 
 pub fn add_transfer(
@@ -47,12 +113,12 @@ pub fn add_transfer(
     description: Option<&str>,
 ) -> Result<i64> {
     let entry = NewEntry::transfer(date, amount, from, to)?.with_description(description);
-    Ok(be.push_entries(&[entry])?[0].id)
+    Ok(push_checked(be, &[entry])?[0].id)
 }
 
 pub fn add_opening(be: &dyn LedgerBackend, date: &str, amount: f64, to: i64) -> Result<i64> {
     let entry = NewEntry::opening(date, amount, to)?;
-    Ok(be.push_entries(&[entry])?[0].id)
+    Ok(push_checked(be, &[entry])?[0].id)
 }
 
 pub struct IncomeResult {
@@ -64,10 +130,8 @@ pub struct IncomeResult {
 /// Registers an income and, if the destination account is liquid and an
 /// emergency account exists, auto-splits `emergency_pct`% into it.
 ///
-/// Both the income and its split transfer go through a single atomic
-/// `push_entries` batch, so the split cannot be half-applied on any backend
-/// (SQLite runs it in `BEGIN IMMEDIATE`; Supabase's `apply_entries` in one
-/// RPC call).
+/// Both the income and its split transfer go through a single atomic batch,
+/// so the split cannot be half-applied.
 pub fn add_income_with_emergency_split(
     be: &dyn LedgerBackend,
     date: &str,
@@ -83,24 +147,17 @@ pub fn add_income_with_emergency_split(
     let mut emergency = None;
     if split {
         let to_account = be.get_account(to)?;
-        if to_account.liquid {
-            if let Some(fund) = be.emergency_account()? {
-                if fund.id != to {
-                    let pct: f64 = be
-                        .get_config("emergency_pct")?
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(10.0);
-                    let split_amount = round2(amount * pct / 100.0);
-                    if split_amount > 0.0 {
-                        batch.push(NewEntry::transfer(date, split_amount, to, fund.id)?);
-                        emergency = Some((fund.name, split_amount));
-                    }
-                }
-            }
+        let fund = be.emergency_account()?;
+        let pct = emergency_pct(be)?;
+        if let (Some(split_amount), Some(fund)) =
+            (rules::emergency_split(&to_account, fund.as_ref(), pct, amount), fund)
+        {
+            batch.push(NewEntry::transfer(date, split_amount, to, fund.id)?);
+            emergency = Some((fund.name, split_amount));
         }
     }
 
-    let inserted = be.push_entries(&batch)?;
+    let inserted = push_checked(be, &batch)?;
     Ok(IncomeResult {
         entry_id: inserted[0].id,
         emergency,
@@ -128,20 +185,21 @@ pub fn delete(be: &dyn LedgerBackend, id: i64) -> Result<()> {
 /// Skips re-running the overdraft/credit-limit guard that `add_expense`/
 /// `add_transfer` apply on insert: this is a correction to historical data,
 /// not a new movement, and the original entry already passed that check
-/// once. The SQL CHECK constraints (kind/nullability, amount > 0, no
-/// self-transfer, valid date) remain enforced as a backstop.
+/// once. Only the shape of the correction is validated.
 pub fn update(be: &dyn LedgerBackend, id: i64, upd: &EntryUpdate) -> Result<Entry> {
-    be.update_entry(id, upd)
+    let current = be.get_entry(id)?;
+    let merged = rules::merge_entry_update(&current, upd)?;
+    be.update_entry(id, &merged)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::EntryKind;
-    use crate::storage::sqlite::SqliteBackend;
+    use crate::storage::memory::MemoryBackend;
 
-    fn setup() -> SqliteBackend {
-        SqliteBackend::open_memory().unwrap()
+    fn setup() -> MemoryBackend {
+        MemoryBackend::seeded()
     }
 
     fn make_account(be: &dyn LedgerBackend, name: &str, kind: &str) -> i64 {
@@ -335,6 +393,35 @@ mod tests {
             },
         );
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn batch_is_atomic_when_second_entry_overdraws() {
+        // Ported from sqlite.rs `push_entries_is_atomic_on_overdraft`: the
+        // guard now runs in the service, before the backend sees the batch.
+        let be = setup();
+        let debito = make_account(&be, "debito", "spending");
+        let fondo = make_account(&be, "fondo", "emergency");
+        add_opening(&be, "2026-08-01", 100.0, fondo).unwrap();
+        let batch = vec![
+            NewEntry::transfer("2026-08-02", 80.0, fondo, debito).unwrap(),
+            NewEntry::transfer("2026-08-02", 30.0, fondo, debito).unwrap(),
+        ];
+        assert!(push_checked(&be, &batch).is_err());
+        assert_eq!(be.entries(&EntryFilter::default()).unwrap().len(), 1);
+        assert_eq!(be.get_account(fondo).unwrap().balance, 100.0);
+    }
+
+    #[test]
+    fn split_preview_matches_the_actual_split() {
+        let be = setup();
+        let debito = make_account(&be, "debito", "spending");
+        make_account(&be, "fondo", "emergency");
+        let preview = emergency_split_preview(&be, debito, 24000.0).unwrap().unwrap();
+        assert_eq!(preview, SplitPreview { pct: 10.0, amount: 2400.0, fund: "fondo".into() });
+        let result =
+            add_income_with_emergency_split(&be, "2026-08-01", 24000.0, debito, "Nomina", None, true).unwrap();
+        assert_eq!(result.emergency, Some((preview.fund, preview.amount)));
     }
 
     #[test]

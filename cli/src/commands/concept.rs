@@ -32,7 +32,7 @@ pub fn run(args: ConceptArgs) -> Result<()> {
 
 fn list() -> Result<()> {
     let be = helpers::backend()?;
-    let concepts = be.list_concepts(None)?;
+    let concepts = money_core::services::concept_service::list(&*be, None)?;
 
     println!("{:<5} {:<25} {:<10}", "ID", "Name", "Type");
     println!("{}", "-".repeat(45));
@@ -52,12 +52,8 @@ fn add(args: AddConceptArgs) -> Result<()> {
     };
 
     let concept_type = args.concept_type.clone();
-    if !["expense", "income", "both"].contains(&concept_type.as_str()) {
-        eprintln!("Type must be: expense, income, or both");
-        return Ok(());
-    }
 
-    be.add_concept(&name, &concept_type)?;
+    money_core::services::concept_service::add(&*be, &name, &concept_type)?;
 
     println!("✓ Concept '{name}' added");
     Ok(())

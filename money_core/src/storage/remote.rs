@@ -2,7 +2,7 @@
 //! access-token headers.
 //!
 //! Read primitives map to the `account_balances` / `entries_view` views
-//! (same derived numbers as the SQLite mirror); every write goes through the
+//! (derived balances); every write goes through the
 //! schema's `apply_entries` RPC (atomic, server-side overdraft checks) or a
 //! plain insert/update/delete for the auxiliary tables. All rows are scoped
 //! to the authenticated user by RLS, so nothing here ever sends a user_id.
@@ -21,7 +21,7 @@ use crate::models::{
     Account, AccountKind, AccountBalance, Budget, Concept, Config, Entry, EntryFilter, EntryKind,
     NewAccount, NewEntry, EntryUpdate,
 };
-use crate::storage::{LedgerBackend, LedgerDelta};
+use crate::storage::LedgerBackend;
 
 pub struct SupabaseBackend {
     client: reqwest::blocking::Client,
@@ -49,6 +49,20 @@ impl SupabaseBackend {
         &self.base_url
     }
 
+    /// `sync_state.revision` read directly; only used as the pre-0002 fallback
+    /// of `status()`, when the `ledger_status()` RPC doesn't exist yet.
+    fn remote_revision(&self) -> Result<i64> {
+        let q = vec![
+            ("select".to_string(), "revision".to_string()),
+            ("id".to_string(), "eq.1".to_string()),
+        ];
+        let v = self.call(reqwest::Method::GET, "/rest/v1/sync_state", &q, None, None)?;
+        Ok(v.as_array()
+            .and_then(|a| a.first())
+            .and_then(|r| r["revision"].as_i64())
+            .unwrap_or(0))
+    }
+
     fn access_token(&self) -> Result<String> {
         if let Some(s) = self.session.lock().unwrap().as_ref() {
             return Ok(s.access_token.clone());
@@ -57,7 +71,7 @@ impl SupabaseBackend {
         // token without making the caller prompt again.
         let refresh = self.auth.load_refresh_token()?.ok_or_else(|| {
             AppError::Auth(
-                "Not logged in. Run: money-tracker db remote login".into(),
+                "No hay sesión activa. Corre: money-tracker db remote login".into(),
             )
         })?;
         self.refresh_session(&refresh)
@@ -182,8 +196,9 @@ impl SupabaseBackend {
         if let Some(period) = &f.period {
             let lo = period.start();
             let hi = period.end_exclusive();
+            // `and`, not `or`: an `or` of the two bounds matches every date.
             q.push((
-                "or".to_string(),
+                "and".to_string(),
                 format!("(date.gte.{lo},date.lt.{hi})"),
             ));
         }
@@ -203,10 +218,19 @@ impl SupabaseBackend {
             ));
         }
         q.push(("order".to_string(), "date.desc,id.desc".to_string()));
-        if let Some(limit) = f.limit {
-            q.push(("limit".to_string(), limit.to_string()));
-        }
         q
+    }
+
+    /// GET every row of a list endpoint, page by page (see [`paginate`]).
+    /// `q` must include a stable `order`.
+    fn get_all(&self, path: &str, q: &[(String, String)], limit: Option<usize>) -> Result<Vec<Value>> {
+        paginate(limit, |offset, count| {
+            let mut page_q = q.to_vec();
+            page_q.push(("limit".to_string(), count.to_string()));
+            page_q.push(("offset".to_string(), offset.to_string()));
+            let v = self.call(reqwest::Method::GET, path, &page_q, None, None)?;
+            Ok(v.as_array().cloned().unwrap_or_default())
+        })
     }
 
     fn entry_from_json(v: &Value) -> Entry {
@@ -254,6 +278,32 @@ impl SupabaseBackend {
     }
 }
 
+/// PostgREST caps every response (1000 rows by default on Supabase) and truncates
+/// silently, so lists are read in pages until a short page arrives or `limit`
+/// is reached. `fetch(offset, count)` returns one page.
+const PAGE_SIZE: usize = 1000;
+
+fn paginate(
+    limit: Option<usize>,
+    mut fetch: impl FnMut(usize, usize) -> Result<Vec<Value>>,
+) -> Result<Vec<Value>> {
+    let mut out = Vec::new();
+    loop {
+        let remaining = limit.map_or(PAGE_SIZE, |l| l - out.len());
+        let want = remaining.min(PAGE_SIZE);
+        if want == 0 {
+            break;
+        }
+        let page = fetch(out.len(), want)?;
+        let got = page.len();
+        out.extend(page);
+        if got < want {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 fn map_postgrest_error(status: reqwest::StatusCode, text: &str) -> AppError {
     let default = |s: &str| AppError::Remote(format!("HTTP {status}: {s}"));
     match serde_json::from_str::<Value>(text) {
@@ -290,9 +340,8 @@ impl LedgerBackend for SupabaseBackend {
         if !include_archived {
             q.push(("archived".to_string(), "eq.false".to_string()));
         }
-        let v = self.call(reqwest::Method::GET, "/rest/v1/accounts", &q, None, None)?;
-        Ok(v.as_array()
-            .unwrap_or(&vec![])
+        Ok(self
+            .get_all("/rest/v1/accounts", &q, None)?
             .iter()
             .map(Self::account_from_json)
             .collect())
@@ -317,15 +366,9 @@ impl LedgerBackend for SupabaseBackend {
     }
 
     fn entries(&self, f: &EntryFilter) -> Result<Vec<Entry>> {
-        let v = self.call(
-            reqwest::Method::GET,
-            "/rest/v1/entries_view",
-            &Self::entries_query(f),
-            None,
-            None,
-        )?;
-        Ok(v.as_array()
-            .unwrap_or(&vec![])
+        let limit = f.limit.map(|l| l as usize);
+        Ok(self
+            .get_all("/rest/v1/entries_view", &Self::entries_query(f), limit)?
             .iter()
             .map(Self::entry_from_json)
             .collect())
@@ -375,70 +418,18 @@ impl LedgerBackend for SupabaseBackend {
         Ok(arr.iter().map(Self::entry_from_json).collect())
     }
 
+    /// `upd` arrives already validated and merged by `rules::merge_entry_update`
+    /// (via `entry_service::update`), so this only writes it.
     fn update_entry(&self, id: i64, upd: &EntryUpdate) -> Result<Entry> {
-        let current = self.get_entry(id)?;
-
-        match current.kind {
-            EntryKind::Income | EntryKind::Opening => {
-                if upd.from_account_id.is_some() {
-                    return Err(AppError::Invalid(
-                        "This entry has no source account to change (it's an income/opening entry)"
-                            .into(),
-                    ));
-                }
-            }
-            EntryKind::Expense => {
-                if upd.to_account_id.is_some() {
-                    return Err(AppError::Invalid(
-                        "This entry has no destination account to change (it's an expense)".into(),
-                    ));
-                }
-            }
-            EntryKind::Transfer => {}
-        }
-        if matches!(current.kind, EntryKind::Transfer | EntryKind::Opening) && upd.concept.is_some()
-        {
-            return Err(AppError::Invalid(
-                "Transfers and opening balances don't carry a concept".into(),
-            ));
-        }
-
-        let new_date = upd.date.clone().unwrap_or_else(|| current.date.clone());
-        let new_amount = upd.amount.unwrap_or(current.amount);
-        let new_from = upd.from_account_id.or(current.from_account_id);
-        let new_to = upd.to_account_id.or(current.to_account_id);
-        let new_concept = upd.concept.clone().or_else(|| current.concept.clone());
-        let new_subconcept = upd
-            .subconcept
-            .clone()
-            .or_else(|| current.subconcept.clone());
-        let new_description = upd
-            .description
-            .clone()
-            .or_else(|| current.description.clone());
-
-        crate::period::validate_date(&new_date)?;
-        if new_amount <= 0.0 {
-            return Err(AppError::Invalid("Amount must be positive".into()));
-        }
-        if current.kind == EntryKind::Transfer && new_from == new_to {
-            return Err(AppError::Invalid(
-                "Transfer source and destination cannot be the same account".into(),
-            ));
-        }
-        if matches!(current.kind, EntryKind::Income | EntryKind::Expense) && new_concept.is_none() {
-            return Err(AppError::Invalid("Concept is required".into()));
-        }
-
         let q = vec![("id".to_string(), format!("eq.{id}"))];
         let body = serde_json::json!({
-            "date": new_date,
-            "amount": new_amount,
-            "from_account_id": new_from,
-            "to_account_id": new_to,
-            "concept": new_concept,
-            "subconcept": new_subconcept,
-            "description": new_description,
+            "date": upd.date,
+            "amount": upd.amount,
+            "from_account_id": upd.from_account_id,
+            "to_account_id": upd.to_account_id,
+            "concept": upd.concept,
+            "subconcept": upd.subconcept,
+            "description": upd.description,
         });
         self.call_unit(reqwest::Method::PATCH, "/rest/v1/entries", &q, Some(body), None)?;
         self.get_entry(id)
@@ -488,9 +479,8 @@ impl LedgerBackend for SupabaseBackend {
             ("select".to_string(), "key,value".to_string()),
             ("order".to_string(), "key".to_string()),
         ];
-        let v = self.call(reqwest::Method::GET, "/rest/v1/config", &q, None, None)?;
-        Ok(v.as_array()
-            .unwrap_or(&vec![])
+        Ok(self
+            .get_all("/rest/v1/config", &q, None)?
             .iter()
             .map(|r| Config {
                 key: r["key"].as_str().unwrap_or("").to_string(),
@@ -507,9 +497,8 @@ impl LedgerBackend for SupabaseBackend {
         if let Some(t) = type_filter {
             q.push(("or".to_string(), format!("(concept_type.eq.{t},concept_type.eq.both)")));
         }
-        let v = self.call(reqwest::Method::GET, "/rest/v1/concepts", &q, None, None)?;
-        Ok(v.as_array()
-            .unwrap_or(&vec![])
+        Ok(self
+            .get_all("/rest/v1/concepts", &q, None)?
             .iter()
             .map(|r| Concept {
                 id: r["id"].as_i64(),
@@ -520,19 +509,11 @@ impl LedgerBackend for SupabaseBackend {
     }
 
     fn add_concept(&self, name: &str, concept_type: &str) -> Result<()> {
-        if !["expense", "income", "both"].contains(&concept_type) {
-            return Err(AppError::Invalid(
-                "Type must be expense, income, or both".into(),
-            ));
-        }
         let body = serde_json::json!({ "name": name, "concept_type": concept_type });
         self.call_unit(reqwest::Method::POST, "/rest/v1/concepts", &[], Some(body), None)
     }
 
     fn set_budget(&self, concept: &str, limit: f64, period: &str) -> Result<()> {
-        if limit <= 0.0 {
-            return Err(AppError::Invalid("Limit must be positive".into()));
-        }
         let body = serde_json::json!({
             "concept": concept,
             "monthly_limit": limit,
@@ -550,14 +531,13 @@ impl LedgerBackend for SupabaseBackend {
     fn list_budgets(&self, period: Option<&str>) -> Result<Vec<Budget>> {
         let mut q = vec![
             ("select".to_string(), "id,concept,monthly_limit,period".to_string()),
-            ("order".to_string(), "concept".to_string()),
+            ("order".to_string(), "concept,period".to_string()),
         ];
         if let Some(p) = period {
             q.push(("period".to_string(), format!("eq.{p}")));
         }
-        let v = self.call(reqwest::Method::GET, "/rest/v1/budgets", &q, None, None)?;
-        Ok(v.as_array()
-            .unwrap_or(&vec![])
+        Ok(self
+            .get_all("/rest/v1/budgets", &q, None)?
             .iter()
             .map(|r| Budget {
                 id: r["id"].as_i64(),
@@ -576,34 +556,48 @@ impl LedgerBackend for SupabaseBackend {
         self.call_unit(reqwest::Method::DELETE, "/rest/v1/budgets", &q, None, None)
     }
 
-    fn remote_revision(&self) -> Result<i64> {
-        let q = vec![
-            ("select".to_string(), "revision".to_string()),
-            ("id".to_string(), "eq.1".to_string()),
-        ];
-        let v = self.call(reqwest::Method::GET, "/rest/v1/sync_state", &q, None, None)?;
-        Ok(v.as_array()
-            .and_then(|a| a.first())
-            .and_then(|r| r["revision"].as_i64())
-            .unwrap_or(0))
+    fn status(&self) -> Result<crate::models::LedgerStatus> {
+        match self.call(
+            reqwest::Method::POST,
+            "/rest/v1/rpc/ledger_status",
+            &[],
+            Some(serde_json::json!({})),
+            None,
+        ) {
+            Ok(v) => Ok(crate::models::LedgerStatus {
+                revision: v["revision"].as_i64().unwrap_or(0),
+                schema_version: v["schema_version"].as_i64().unwrap_or(1),
+            }),
+            // Before 0002 the RPC doesn't exist: that *is* schema version 1.
+            Err(AppError::Remote(m)) if m.starts_with("PGRST202") => Ok(crate::models::LedgerStatus {
+                revision: self.remote_revision()?,
+                schema_version: 1,
+            }),
+            Err(e) => Err(e),
+        }
     }
 
-    fn pull_changes_since(&self, cursor: i64) -> Result<LedgerDelta> {
+    fn export_snapshot(&self) -> Result<crate::models::LedgerSnapshot> {
         let v = self.call(
             reqwest::Method::POST,
-            "/rest/v1/rpc/pull_changes",
+            "/rest/v1/rpc/export_ledger",
             &[],
-            Some(serde_json::json!({ "p_cursor": cursor })),
+            Some(serde_json::json!({})),
             None,
         )?;
-        let arr = |key: &str| -> Vec<Value> {
-            v[key]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-        };
-        Ok(LedgerDelta {
-            cursor: v["cursor"].as_i64().unwrap_or(cursor),
+        let arr = |k: &str| v[k].as_array().cloned().unwrap_or_default();
+        Ok(crate::models::LedgerSnapshot {
+            revision: v["revision"].as_i64().unwrap_or(0),
+            schema_version: v["schema_version"].as_i64().unwrap_or(0),
+            exported_at: v["exported_at"].as_str().unwrap_or("").to_string(),
+            concepts: arr("concepts")
+                .iter()
+                .map(|r| Concept {
+                    id: r["id"].as_i64(),
+                    name: r["name"].as_str().unwrap_or("").to_string(),
+                    concept_type: r["concept_type"].as_str().unwrap_or("").to_string(),
+                })
+                .collect(),
             accounts: arr("accounts").iter().map(Self::account_from_json).collect(),
             entries: arr("entries").iter().map(Self::entry_from_json).collect(),
             budgets: arr("budgets")
@@ -615,14 +609,6 @@ impl LedgerBackend for SupabaseBackend {
                     period: r["period"].as_str().unwrap_or("").to_string(),
                 })
                 .collect(),
-            concepts: arr("concepts")
-                .iter()
-                .map(|r| Concept {
-                    id: r["id"].as_i64(),
-                    name: r["name"].as_str().unwrap_or("").to_string(),
-                    concept_type: r["concept_type"].as_str().unwrap_or("").to_string(),
-                })
-                .collect(),
             config: arr("config")
                 .iter()
                 .map(|r| Config {
@@ -630,20 +616,66 @@ impl LedgerBackend for SupabaseBackend {
                     value: r["value"].as_str().unwrap_or("").to_string(),
                 })
                 .collect(),
-            deletes: arr("deletes")
-                .iter()
-                .filter_map(|r| {
-                    let table = r["table"].as_str()?.to_string();
-                    let id = r["id"].as_i64()?;
-                    Some((table, id))
-                })
-                .collect(),
         })
+    }
+
+    fn session_email(&self) -> Option<String> {
+        self.session
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|s| s.user.as_ref())
+            .and_then(|u| u.email.clone())
     }
 }
 
 impl std::fmt::Debug for SupabaseBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "SupabaseBackend({})", self.base_url)
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::period::Period;
+
+    #[test]
+    fn period_filter_is_an_and_range_that_coexists_with_the_account_filter() {
+        let f = EntryFilter {
+            period: Some(Period::parse("2026-08").unwrap()),
+            account_id: Some(3),
+            ..Default::default()
+        };
+        let q = SupabaseBackend::entries_query(&f);
+        assert!(q.contains(&("and".to_string(), "(date.gte.2026-08-01,date.lt.2026-09-01)".to_string())));
+        assert!(q.contains(&("or".to_string(), "(from_account_id.eq.3,to_account_id.eq.3)".to_string())));
+        assert_eq!(q.iter().filter(|(k, _)| k == "or").count(), 1);
+        assert!(!q.iter().any(|(k, _)| k == "limit"), "limit is applied by paginate()");
+    }
+
+    #[test]
+    fn paginate_keeps_fetching_full_pages_and_stops_on_a_short_one() {
+        let total = 2037usize;
+        let mut calls = Vec::new();
+        let rows = paginate(None, |offset, count| {
+            calls.push((offset, count));
+            let n = count.min(total.saturating_sub(offset));
+            Ok(vec![Value::Null; n])
+        })
+        .unwrap();
+        assert_eq!(rows.len(), total);
+        assert_eq!(calls, vec![(0, 1000), (1000, 1000), (2000, 1000)]);
+    }
+
+    #[test]
+    fn paginate_honors_a_caller_limit() {
+        let mut calls = Vec::new();
+        let rows = paginate(Some(1500), |offset, count| {
+            calls.push((offset, count));
+            Ok(vec![Value::Null; count])
+        })
+        .unwrap();
+        assert_eq!(rows.len(), 1500);
+        assert_eq!(calls, vec![(0, 1000), (1000, 500)]);
     }
 }

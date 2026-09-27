@@ -17,7 +17,6 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result};
-use crate::db::db_path;
 
 pub const SUPABASE_URL_ENV: &str = "MONEY_TRACKER_SUPABASE_URL";
 pub const SUPABASE_KEY_ENV: &str = "MONEY_TRACKER_SUPABASE_KEY";
@@ -26,9 +25,40 @@ pub const SUPABASE_KEY_ENV: &str = "MONEY_TRACKER_SUPABASE_KEY";
 pub struct Settings {
     pub supabase_url: Option<String>,
     pub supabase_publishable_key: Option<String>,
+    /// `"keychain"` (default) or `"file"`. Kept as the raw string so an unknown
+    /// value survives a rewrite of the file; read it through [`Settings::token_storage`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_storage: Option<String>,
+}
+
+/// Where the Supabase refresh token is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenStorage {
+    /// OS keychain (macOS Keychain, Windows Credential Manager, Secret Service),
+    /// falling back to a 0600 file when the keychain is unavailable.
+    Keychain,
+    /// Only a 0600 file under the config dir; the keychain is never touched, so
+    /// the OS never prompts (e.g. macOS on every rebuild of an ad-hoc signed binary).
+    File,
+}
+
+impl TokenStorage {
+    pub fn label(&self) -> &'static str {
+        match self {
+            TokenStorage::Keychain => "llavero del sistema",
+            TokenStorage::File => "archivo",
+        }
+    }
 }
 
 impl Settings {
+    pub fn token_storage(&self) -> TokenStorage {
+        match self.token_storage.as_deref() {
+            Some("file") => TokenStorage::File,
+            _ => TokenStorage::Keychain,
+        }
+    }
+
     /// Loads persisted settings, then lets the environment override the two
     /// fields. Reads are never fallible here (a missing/unparseable file is
     /// the same as "no config"), so CLI/GUI startup doesn't need this to be
@@ -102,8 +132,8 @@ pub fn config_path() -> PathBuf {
 }
 
 /// The `.money-tracker` directory under the user's home (or the parent of an
-/// overridden `MONEY_TRACKER_CONFIG`). Shared by `config_path`, the mirror
-/// path, and the auth token file fallback.
+/// overridden `MONEY_TRACKER_CONFIG`). Shared by `config_path`, the backups and
+/// the auth token file.
 pub fn config_dir() -> PathBuf {
     if let Ok(p) = std::env::var("MONEY_TRACKER_CONFIG") {
         let path = PathBuf::from(p);
@@ -118,21 +148,17 @@ pub fn config_dir() -> PathBuf {
     PathBuf::from(home).join(".money-tracker")
 }
 
-/// Resolves the local mirror database path. Defaults to the same file the
-/// single-user app used before (so existing local data keeps working as the
-/// mirror), where `MONEY_TRACKER_DB` points it at a throwaway for tests.
-pub fn mirror_path() -> PathBuf {
-    db_path()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Both tests mutate process-wide env vars; run in parallel they race.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn missing_file_loads_defaults() {
-        // Point config somewhere obviously nonexistent, then a relative
-        // env that can't collide with anything.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("MONEY_TRACKER_CONFIG", "/nonexistent/x/config.toml");
         let s = Settings::load();
         assert!(s.supabase_url.is_none());
@@ -141,11 +167,25 @@ mod tests {
 
     #[test]
     fn env_overrides_file() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("MONEY_TRACKER_CONFIG", "/nonexistent/x/config.toml");
         std::env::set_var(SUPABASE_URL_ENV, "https://abc.supabase.co");
         let s = Settings::load();
         assert_eq!(s.supabase_url.as_deref(), Some("https://abc.supabase.co"));
         std::env::remove_var(SUPABASE_URL_ENV);
         std::env::remove_var("MONEY_TRACKER_CONFIG");
+    }
+
+    #[test]
+    fn token_storage_defaults_to_keychain_and_survives_a_rewrite() {
+        let parse = |s: &str| toml::from_str::<Settings>(s).unwrap();
+        assert_eq!(parse("").token_storage(), TokenStorage::Keychain);
+        assert_eq!(parse("token_storage = \"file\"").token_storage(), TokenStorage::File);
+        assert_eq!(parse("token_storage = \"weird\"").token_storage(), TokenStorage::Keychain);
+
+        let s = parse("supabase_url = \"https://x.supabase.co\"\ntoken_storage = \"file\"");
+        let rewritten: Settings = toml::from_str(&toml::to_string(&s).unwrap()).unwrap();
+        assert_eq!(rewritten.token_storage(), TokenStorage::File);
+        assert!(!toml::to_string(&parse("")).unwrap().contains("token_storage"));
     }
 }

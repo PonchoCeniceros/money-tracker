@@ -1,8 +1,14 @@
 use crate::error::{AppError, Result};
-use crate::models::{AccountBalance, NewAccount, NewEntry};
+use crate::models::{AccountBalance, AccountKind, NewAccount, NewEntry};
+use crate::rules;
+use crate::services::entry_service;
 use crate::storage::LedgerBackend;
 
 pub fn create_account(be: &dyn LedgerBackend, new: &NewAccount) -> Result<i64> {
+    rules::validate_new_account(new)?;
+    if new.kind == AccountKind::Emergency {
+        rules::check_new_emergency(be.emergency_account()?.as_ref())?;
+    }
     be.insert_account(new)
 }
 
@@ -92,7 +98,7 @@ pub fn reconcile_account(
     } else {
         NewEntry::income(date, -diff, account_id, concept)?.with_description(Some("Cuadre de efectivo"))
     };
-    let inserted = be.push_entries(&[entry])?;
+    let inserted = entry_service::push_checked(be, &[entry])?;
 
     Ok(ReconcileResult {
         entry_id: inserted.first().map(|e| e.id),
@@ -103,10 +109,10 @@ pub fn reconcile_account(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::sqlite::SqliteBackend;
+    use crate::storage::memory::MemoryBackend;
 
-    fn setup() -> SqliteBackend {
-        SqliteBackend::open_memory().unwrap()
+    fn setup() -> MemoryBackend {
+        MemoryBackend::seeded()
     }
 
     #[test]

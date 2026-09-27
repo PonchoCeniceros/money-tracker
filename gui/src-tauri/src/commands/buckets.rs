@@ -16,7 +16,7 @@ pub fn bucket_deposit(
     amount: f64,
     date: String,
 ) -> ApiResult<i64> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     Ok(entry_service::add_transfer(
         &**be,
         &date,
@@ -37,7 +37,7 @@ pub fn bucket_withdraw(
     amount: f64,
     date: String,
 ) -> ApiResult<i64> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     Ok(entry_service::add_transfer(
         &**be,
         &date,

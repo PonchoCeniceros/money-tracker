@@ -7,13 +7,13 @@ use crate::state::AppState;
 
 #[tauri::command]
 pub fn get_config(state: State<AppState>, key: String) -> ApiResult<Option<String>> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     Ok(be.get_config(&key)?)
 }
 
 #[tauri::command]
 pub fn set_config(state: State<AppState>, key: String, value: String) -> ApiResult<()> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     be.set_config(&key, &value)?;
     Ok(())
 }
@@ -26,7 +26,7 @@ pub struct ConfigEntry {
 
 #[tauri::command]
 pub fn list_config(state: State<AppState>) -> ApiResult<Vec<ConfigEntry>> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     Ok(be
         .list_config()?
         .into_iter()

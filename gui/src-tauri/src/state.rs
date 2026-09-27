@@ -1,27 +1,46 @@
-use std::sync::Mutex;
+use std::ops::Deref;
+use std::sync::{Mutex, MutexGuard};
 
-use money_core::sync::production_backend;
-use money_core::LedgerBackend;
+use money_core::{LedgerBackend, Settings};
 
-/// Holds the single long-lived backend the GUI keeps open for its whole
-/// process lifetime — unlike the CLI, which opens one per invocation. This is
-/// the same `production_backend` the CLI uses: Supabase (with local mirror)
-/// when remote config is present, plain local SQLite otherwise. The session
-/// lives on this backend (in-memory access token refreshed from the keyring),
-/// so the GUI and CLI can act on the same ledger interchangeably.
+use crate::error::ApiResult;
+
+/// The GUI keeps one long-lived Supabase backend for its whole process
+/// (the CLI opens one per invocation). It is built on first use, not at
+/// startup, so a missing config or session reaches the frontend as an error
+/// (`not_configured`, `auth_needed`, `schema_mismatch`) instead of a panic
+/// before the window opens.
 pub struct AppState {
-    pub backend: Mutex<Box<dyn LedgerBackend>>,
-    /// Email of the signed-in Supabase session, when one was started from the
-    /// GUI (survives logout/relogin so the Settings panel can show it).
-    pub session_email: Mutex<Option<String>>,
+    backend: Mutex<Option<Box<dyn LedgerBackend>>>,
+}
+
+/// Lock on a connected backend; derefs to `Box<dyn LedgerBackend>`.
+pub struct BackendGuard<'a>(MutexGuard<'a, Option<Box<dyn LedgerBackend>>>);
+
+impl Deref for BackendGuard<'_> {
+    type Target = Box<dyn LedgerBackend>;
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().expect("AppState::backend connects before returning a guard")
+    }
 }
 
 impl AppState {
-    pub fn new() -> money_core::Result<Self> {
-        let backend = production_backend(&money_core::Settings::load())?;
-        Ok(Self {
-            backend: Mutex::new(backend),
-            session_email: Mutex::new(None),
-        })
+    pub fn new() -> Self {
+        AppState { backend: Mutex::new(None) }
+    }
+
+    /// The connected backend, connecting first if needed.
+    pub fn backend(&self) -> ApiResult<BackendGuard<'_>> {
+        let mut guard = self.backend.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.is_none() {
+            *guard = Some(money_core::storage::connect(&Settings::load())?);
+        }
+        Ok(BackendGuard(guard))
+    }
+
+    /// Drop the connection (after login/logout or a config change) so the next
+    /// call reconnects with the current settings and session.
+    pub fn reset(&self) {
+        *self.backend.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }

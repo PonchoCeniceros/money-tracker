@@ -7,7 +7,7 @@ use crate::state::AppState;
 
 #[tauri::command]
 pub fn is_seeded(state: State<AppState>) -> ApiResult<bool> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     Ok(setup_service::is_seeded(&**be)?)
 }
 
@@ -24,7 +24,7 @@ pub struct SeedOutput {
 
 #[tauri::command]
 pub fn seed(state: State<AppState>, input: SeedInput) -> ApiResult<SeedOutput> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     let summary = setup_service::seed(
         &**be,
         &SeedOptions {

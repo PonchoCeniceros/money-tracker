@@ -21,7 +21,7 @@ pub fn is_seeded(be: &dyn LedgerBackend) -> Result<bool> {
 
 /// Writes opening-balance entries (`kind = 'opening'`, excluded from income
 /// totals) for each account in `opts.accounts`. All-or-nothing via a single
-/// atomic `push_entries` batch.
+/// atomic batch.
 pub fn seed(be: &dyn LedgerBackend, opts: &SeedOptions) -> Result<SeedSummary> {
     if opts.accounts.is_empty() {
         return Err(AppError::Invalid("No opening balances given".into()));
@@ -38,7 +38,7 @@ pub fn seed(be: &dyn LedgerBackend, opts: &SeedOptions) -> Result<SeedSummary> {
         seeded.push((name.clone(), *amount));
     }
 
-    be.push_entries(&batch)?;
+    crate::services::entry_service::push_checked(be, &batch)?;
     Ok(SeedSummary { seeded })
 }
 
@@ -48,10 +48,10 @@ mod tests {
     use crate::models::NewAccount;
     use crate::period::Period;
     use crate::services::{account_service, report_service};
-    use crate::storage::sqlite::SqliteBackend;
+    use crate::storage::memory::MemoryBackend;
 
-    fn setup_db() -> SqliteBackend {
-        SqliteBackend::open_memory().unwrap()
+    fn setup_db() -> MemoryBackend {
+        MemoryBackend::seeded()
     }
 
     #[test]

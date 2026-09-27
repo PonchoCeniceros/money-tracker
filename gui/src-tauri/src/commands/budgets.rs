@@ -1,9 +1,8 @@
-//! Budgets are informative-only rows with no invariants beyond the schema's
-//! own CHECK/UNIQUE constraints; these thin commands go straight to the
-//! backend's `set_budget`/`list_budgets`/`delete_budget`.
+//! Budgets are informative only; each command is one `budget_service` call.
 use tauri::State;
 
 use money_core::models::Budget;
+use money_core::services::budget_service;
 
 
 use crate::error::ApiResult;
@@ -18,20 +17,20 @@ pub struct SetBudgetInput {
 
 #[tauri::command]
 pub fn set_budget(state: State<AppState>, input: SetBudgetInput) -> ApiResult<()> {
-    let be = state.backend.lock().unwrap();
-    be.set_budget(&input.concept, input.monthly_limit, &input.period)?;
+    let be = state.backend()?;
+    budget_service::set(&**be, &input.concept, input.monthly_limit, &input.period)?;
     Ok(())
 }
 
 #[tauri::command]
 pub fn list_budgets(state: State<AppState>, period: String) -> ApiResult<Vec<Budget>> {
-    let be = state.backend.lock().unwrap();
-    Ok(be.list_budgets(Some(&period))?)
+    let be = state.backend()?;
+    Ok(budget_service::list(&**be, Some(&period))?)
 }
 
 #[tauri::command]
 pub fn delete_budget(state: State<AppState>, concept: String, period: String) -> ApiResult<()> {
-    let be = state.backend.lock().unwrap();
-    be.delete_budget(&concept, &period)?;
+    let be = state.backend()?;
+    budget_service::remove(&**be, &concept, &period)?;
     Ok(())
 }

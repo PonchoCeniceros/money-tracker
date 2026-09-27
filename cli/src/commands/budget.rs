@@ -1,7 +1,7 @@
 use clap::{Args, Subcommand};
 use dialoguer::{FuzzySelect, Input};
 use money_core::period::Period;
-use money_core::services::report_service;
+use money_core::services::{budget_service, report_service};
 use money_core::Result;
 
 use crate::commands::helpers;
@@ -112,11 +112,7 @@ fn set(args: SetArgs) -> Result<()> {
     };
 
     let limit = match args.limit {
-        Some(l) if l > 0.0 => l,
-        Some(_) => {
-            eprintln!("Limit must be positive");
-            return Ok(());
-        }
+        Some(l) => l,
         None => helpers::map_dlg_err(
             Input::new()
                 .with_prompt("Monthly limit ($)")
@@ -125,7 +121,7 @@ fn set(args: SetArgs) -> Result<()> {
         )?,
     };
 
-    be.set_budget(&concept, limit, period.as_str())?;
+    budget_service::set(&*be, &concept, limit, period.as_str())?;
 
     println!(
         "✓ Presupuesto de '{concept}' para {}: ${limit:.2}/mes",
@@ -137,11 +133,10 @@ fn set(args: SetArgs) -> Result<()> {
 fn rm(args: RmArgs) -> Result<()> {
     let be = helpers::backend()?;
     let period = resolve_period(args.period)?;
-    let had = be
-        .list_budgets(Some(period.as_str()))?
+    let had = budget_service::list(&*be, Some(period.as_str()))?
         .iter()
         .any(|b| b.concept == args.concept);
-    be.delete_budget(&args.concept, period.as_str())?;
+    budget_service::remove(&*be, &args.concept, period.as_str())?;
     if !had {
         println!("No había presupuesto de '{}' para {}", args.concept, period.as_str());
     } else {

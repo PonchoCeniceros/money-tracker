@@ -1,14 +1,13 @@
 pub mod auth;
-pub mod db;
 pub mod error;
 pub mod models;
 pub mod period;
+pub mod rules;
+pub mod schema;
 pub mod services;
 pub mod settings;
 pub mod storage;
-pub mod sync;
 
-pub use db::open_db;
 pub use error::{AppError, Result};
 pub use models::*;
 pub use period::{today, validate_date, Period};

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { accountsApi, type AccountKindInput } from "../api/accounts";
 import { setupApi } from "../api/setup";
-import { syncApi } from "../api/sync";
 import { useApi, bumpRevision } from "../hooks/useApi";
 import { Field } from "../components/Field";
 import { ErrorBanner } from "../components/ErrorBanner";
@@ -165,20 +164,12 @@ function SeedStep({
       return;
     }
 
-    // Remote already has data? Never silently seed over it (US2 — the
-    // SetupWizard runs against whatever backend is live).
-    try {
-      const s = await syncApi.status();
-      if (s.remote_configured && (s.remote_revision ?? 0) > 0) {
-        const ok = window.confirm(
-          "El remoto ya tiene movimientos registrados (revisión " +
-            s.remote_revision +
-            "). ¿Continuar y agregar los saldos iniciales de todas formas?"
-        );
-        if (!ok) return;
-      }
-    } catch {
-      // No remote → the check is irrelevant locally.
+    // The ledger already has movements? Never silently seed opening balances over it.
+    if (await setupApi.isSeeded()) {
+      const ok = window.confirm(
+        "El libro ya tiene movimientos registrados. ¿Agregar los saldos iniciales de todas formas?"
+      );
+      if (!ok) return;
     }
 
     setBusy(true);

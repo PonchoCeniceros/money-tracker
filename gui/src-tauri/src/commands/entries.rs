@@ -19,7 +19,7 @@ pub struct ExpenseInput {
 
 #[tauri::command]
 pub fn add_expense(state: State<AppState>, input: ExpenseInput) -> ApiResult<i64> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     Ok(entry_service::add_expense(
         &**be,
         &input.date,
@@ -50,7 +50,7 @@ pub struct IncomeOutput {
 
 #[tauri::command]
 pub fn add_income(state: State<AppState>, input: IncomeInput) -> ApiResult<IncomeOutput> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     let result = entry_service::add_income_with_emergency_split(
         &**be,
         &input.date,
@@ -77,7 +77,7 @@ pub struct TransferInput {
 
 #[tauri::command]
 pub fn add_transfer(state: State<AppState>, input: TransferInput) -> ApiResult<i64> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     Ok(entry_service::add_transfer(
         &**be,
         &input.date,
@@ -99,7 +99,7 @@ pub struct EntryFilterInput {
 
 #[tauri::command]
 pub fn list_entries(state: State<AppState>, filter: EntryFilterInput) -> ApiResult<Vec<Entry>> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     let period = match filter.period {
         Some(p) => Some(Period::parse(&p)?),
         None => None,
@@ -132,7 +132,7 @@ pub struct EntryUpdateInput {
 
 #[tauri::command]
 pub fn update_entry(state: State<AppState>, id: i64, input: EntryUpdateInput) -> ApiResult<Entry> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     let upd = EntryUpdate {
         date: input.date,
         amount: input.amount,
@@ -147,7 +147,7 @@ pub fn update_entry(state: State<AppState>, id: i64, input: EntryUpdateInput) ->
 
 #[tauri::command]
 pub fn delete_entry(state: State<AppState>, id: i64) -> ApiResult<()> {
-    let be = state.backend.lock().unwrap();
+    let be = state.backend()?;
     entry_service::delete(&**be, id)?;
     Ok(())
 }

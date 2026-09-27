@@ -177,3 +177,30 @@ impl AccountBalance {
         self.kind.is_asset()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Ported from db.rs `target_account_allows_open_ended_bucket` when the SQLite
+    // schema was removed; `spending_account_rejects_target_amount` and
+    // `only_one_active_emergency_account` now live in `rules.rs`.
+    #[test]
+    fn target_account_allows_open_ended_bucket() {
+        let bucket = NewAccount::target("Patrimonio", None).unwrap();
+        assert_eq!(bucket.kind, AccountKind::Target);
+        assert_eq!(bucket.target_amount, None);
+    }
+
+    #[test]
+    fn target_amount_must_be_positive_when_given() {
+        assert!(NewAccount::target("Vacaciones", Some(50000.0)).is_ok());
+        assert!(NewAccount::target("Vacaciones", Some(0.0)).is_err());
+    }
+
+    #[test]
+    fn restricted_accounts_are_not_liquid() {
+        assert!(NewAccount::spending("debito").liquid);
+        assert!(!NewAccount::spending("vales").restricted().liquid);
+    }
+}

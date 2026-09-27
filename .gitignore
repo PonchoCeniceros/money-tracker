@@ -4,3 +4,7 @@
 *.xlsx
 .DS_Store
 .claude/
+node_modules/
+.env*
+*.log
+supabase/.temp/

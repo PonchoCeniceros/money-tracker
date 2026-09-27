@@ -2,16 +2,13 @@ use chrono::{Duration, Local};
 use money_core::error::AppError;
 use money_core::models::{AccountBalance, Concept};
 use money_core::services::account_service;
-use money_core::sync::production_backend;
 use money_core::{period, LedgerBackend, Result};
 
-/// The production ledger for this invocation: Supabase (mirror-synced) when
-/// remote config is present, otherwise the plain local SQLite file. Auth is
-/// handled inside the backend — a stored refresh token is resumed
-/// automatically and a missing one fails with a clear `db remote login`
-/// hint.
+/// The ledger for this invocation: Supabase, the only store. Fails with
+/// `NotConfigured` (and instructions) when url/key are missing, or with an auth
+/// error pointing to `db remote login` when there is no valid session.
 pub fn backend() -> Result<Box<dyn LedgerBackend>> {
-    production_backend(&money_core::Settings::load())
+    money_core::storage::connect(&money_core::Settings::load())
 }
 
 /// Replaces the old all-or-nothing `interactive` heuristic (pre-redesign

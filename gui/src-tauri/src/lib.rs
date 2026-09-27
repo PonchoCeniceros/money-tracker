@@ -6,11 +6,9 @@ use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let state = AppState::new().expect("failed to open money-tracker database");
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(state)
+        .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::accounts::list_accounts,
             commands::accounts::create_account,
@@ -36,8 +34,8 @@ pub fn run() {
             commands::config::list_config,
             commands::setup::is_seeded,
             commands::setup::seed,
-            commands::sync::sync_status,
-            commands::sync::sync_poll,
+            commands::sync::ledger_status,
+            commands::sync::connection_info,
             commands::sync::remote_login,
             commands::sync::remote_logout,
         ])

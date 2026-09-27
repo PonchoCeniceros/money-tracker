@@ -3,7 +3,7 @@
 //! `#[cfg(test)]` unit tests (which can see private details) by proving the
 //! crate's *external* contract holds even if internal structure changes.
 //!
-//! Everything runs against an in-memory `SqliteBackend`; the same service
+//! Everything runs against the in-memory `MemoryBackend`; the same service
 //! layer talks to Supabase at runtime, so these scenarios pin the math that
 //! must not drift between stores.
 
@@ -11,11 +11,11 @@ use money_core::models::NewAccount;
 use money_core::period::Period;
 use money_core::services::{account_service, entry_service, report_service, setup_service};
 use money_core::services::setup_service::SeedOptions;
-use money_core::storage::sqlite::SqliteBackend;
+use money_core::storage::memory::MemoryBackend;
 use money_core::LedgerBackend;
 
-fn fresh_db() -> SqliteBackend {
-    SqliteBackend::open_memory().unwrap()
+fn fresh_db() -> MemoryBackend {
+    MemoryBackend::seeded()
 }
 
 /// V0/seed: opening balances must not show up as income in the month
