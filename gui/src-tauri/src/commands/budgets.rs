@@ -16,21 +16,30 @@ pub struct SetBudgetInput {
 }
 
 #[tauri::command]
-pub fn set_budget(state: State<AppState>, input: SetBudgetInput) -> ApiResult<()> {
-    let be = state.backend()?;
-    budget_service::set(&**be, &input.concept, input.monthly_limit, &input.period)?;
-    Ok(())
+pub async fn set_budget(state: State<'_, AppState>, input: SetBudgetInput) -> ApiResult<()> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        budget_service::set(&**be, &input.concept, input.monthly_limit, &input.period)?;
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn list_budgets(state: State<AppState>, period: String) -> ApiResult<Vec<Budget>> {
-    let be = state.backend()?;
-    Ok(budget_service::list(&**be, Some(&period))?)
+pub async fn list_budgets(state: State<'_, AppState>, period: String) -> ApiResult<Vec<Budget>> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        Ok(budget_service::list(&**be, Some(&period))?)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_budget(state: State<AppState>, concept: String, period: String) -> ApiResult<()> {
-    let be = state.backend()?;
-    budget_service::remove(&**be, &concept, &period)?;
-    Ok(())
+pub async fn delete_budget(state: State<'_, AppState>, concept: String, period: String) -> ApiResult<()> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        budget_service::remove(&**be, &concept, &period)?;
+        Ok(())
+    })
+    .await
 }

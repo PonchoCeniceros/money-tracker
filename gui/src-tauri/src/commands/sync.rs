@@ -10,12 +10,12 @@ use money_core::settings::save_settings;
 use money_core::Settings;
 
 use crate::error::ApiResult;
-use crate::state::AppState;
+use crate::state::{blocking, AppState};
 
 #[tauri::command]
-pub fn ledger_status(state: State<AppState>) -> ApiResult<LedgerStatus> {
-    let be = state.backend()?;
-    Ok(be.status()?)
+pub async fn ledger_status(state: State<'_, AppState>) -> ApiResult<LedgerStatus> {
+    let be = state.backend().await?;
+    blocking(move || Ok(be.status()?)).await
 }
 
 #[derive(serde::Serialize)]
@@ -32,27 +32,34 @@ pub struct ConnectionInfo {
 /// What Settings shows about the connection. Never fails: an unreachable or
 /// unconfigured Supabase is reported as flags, not as an error.
 #[tauri::command]
-pub fn connection_info(state: State<AppState>) -> ApiResult<ConnectionInfo> {
-    let s = Settings::load();
-    let configured = s.is_complete();
-    let auth = SupabaseAuth::new(
-        s.supabase_url.as_deref().unwrap_or_default(),
-        s.supabase_publishable_key.as_deref().unwrap_or_default(),
-    );
-    let logged_in = configured && auth.load_refresh_token()?.is_some();
-    let email = if logged_in {
-        state.backend().ok().and_then(|be| be.session_email())
-    } else {
-        None
-    };
-    Ok(ConnectionInfo {
-        url: s.supabase_url.clone(),
-        configured,
-        logged_in,
-        email,
-        token_storage: auth.storage().label().to_string(),
-        last_backup: backup_service::last_backup(),
+pub async fn connection_info(state: State<'_, AppState>) -> ApiResult<ConnectionInfo> {
+    // Everything that builds an HTTP client (SupabaseAuth, the backend) must be
+    // created and dropped off the async threads; see `state.rs`.
+    let (mut info, logged_in) = blocking(|| {
+        let s = Settings::load();
+        let configured = s.is_complete();
+        let auth = SupabaseAuth::new(
+            s.supabase_url.as_deref().unwrap_or_default(),
+            s.supabase_publishable_key.as_deref().unwrap_or_default(),
+        );
+        let logged_in = configured && auth.load_refresh_token()?.is_some();
+        let info = ConnectionInfo {
+            url: s.supabase_url.clone(),
+            configured,
+            logged_in,
+            email: None,
+            token_storage: auth.storage().label().to_string(),
+            last_backup: backup_service::last_backup(),
+        };
+        Ok((info, logged_in))
     })
+    .await?;
+    if logged_in {
+        if let Ok(be) = state.backend().await {
+            info.email = blocking(move || Ok(be.session_email())).await?;
+        }
+    }
+    Ok(info)
 }
 
 #[derive(serde::Deserialize)]
@@ -65,7 +72,7 @@ pub struct LoginInput {
 }
 
 #[tauri::command]
-pub fn remote_login(state: State<AppState>, input: LoginInput) -> ApiResult<()> {
+pub async fn remote_login(state: State<'_, AppState>, input: LoginInput) -> ApiResult<()> {
     let mut settings = Settings::load();
     let url = input
         .url
@@ -78,23 +85,32 @@ pub fn remote_login(state: State<AppState>, input: LoginInput) -> ApiResult<()> 
         .or(settings.supabase_publishable_key.clone())
         .ok_or_else(|| money_core::AppError::Config("Falta la publishable key".into()))?;
 
-    SupabaseAuth::new(&url, &key).login(&input.email, &input.password)?;
+    let (login_url, login_key) = (url.clone(), key.clone());
+    blocking(move || {
+        SupabaseAuth::new(&login_url, &login_key).login(&input.email, &input.password)?;
+        Ok(())
+    })
+    .await?;
 
     settings.supabase_url = Some(url);
     settings.supabase_publishable_key = Some(key);
     save_settings(&settings)?;
-    state.reset();
+    state.reset().await;
     Ok(())
 }
 
 #[tauri::command]
-pub fn remote_logout(state: State<AppState>) -> ApiResult<()> {
-    let s = Settings::load();
-    SupabaseAuth::new(
-        s.supabase_url.as_deref().unwrap_or_default(),
-        s.supabase_publishable_key.as_deref().unwrap_or_default(),
-    )
-    .clear_refresh_token()?;
-    state.reset();
+pub async fn remote_logout(state: State<'_, AppState>) -> ApiResult<()> {
+    blocking(|| {
+        let s = Settings::load();
+        SupabaseAuth::new(
+            s.supabase_url.as_deref().unwrap_or_default(),
+            s.supabase_publishable_key.as_deref().unwrap_or_default(),
+        )
+        .clear_refresh_token()?;
+        Ok(())
+    })
+    .await?;
+    state.reset().await;
     Ok(())
 }

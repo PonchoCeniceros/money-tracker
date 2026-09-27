@@ -15,16 +15,22 @@ pub struct BackupInput {
 }
 
 #[tauri::command]
-pub fn backup_create(state: State<AppState>, input: BackupInput) -> ApiResult<BackupInfo> {
-    let be = state.backend()?;
-    let dest = input.dest.filter(|d| !d.trim().is_empty()).map(std::path::PathBuf::from);
-    Ok(backup_service::create(&**be, dest.as_deref())?)
+pub async fn backup_create(state: State<'_, AppState>, input: BackupInput) -> ApiResult<BackupInfo> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        let dest = input.dest.filter(|d| !d.trim().is_empty()).map(std::path::PathBuf::from);
+        Ok(backup_service::create(&**be, dest.as_deref())?)
+    })
+    .await
 }
 
 /// `null` when no backup was due. An error means it was due but failed; the
 /// frontend shows it as a warning and the next launch retries.
 #[tauri::command]
-pub fn backup_auto(state: State<AppState>) -> ApiResult<Option<BackupInfo>> {
-    let be = state.backend()?;
-    Ok(backup_service::run_auto_with(&**be).transpose()?)
+pub async fn backup_auto(state: State<'_, AppState>) -> ApiResult<Option<BackupInfo>> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        Ok(backup_service::run_auto_with(&**be).transpose()?)
+    })
+    .await
 }

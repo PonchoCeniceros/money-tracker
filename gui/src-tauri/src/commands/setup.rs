@@ -6,9 +6,12 @@ use crate::error::ApiResult;
 use crate::state::AppState;
 
 #[tauri::command]
-pub fn is_seeded(state: State<AppState>) -> ApiResult<bool> {
-    let be = state.backend()?;
-    Ok(setup_service::is_seeded(&**be)?)
+pub async fn is_seeded(state: State<'_, AppState>) -> ApiResult<bool> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        Ok(setup_service::is_seeded(&**be)?)
+    })
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -23,16 +26,19 @@ pub struct SeedOutput {
 }
 
 #[tauri::command]
-pub fn seed(state: State<AppState>, input: SeedInput) -> ApiResult<SeedOutput> {
-    let be = state.backend()?;
-    let summary = setup_service::seed(
-        &**be,
-        &SeedOptions {
-            accounts: input.accounts,
-            date: input.date,
-        },
-    )?;
-    Ok(SeedOutput {
-        seeded: summary.seeded,
+pub async fn seed(state: State<'_, AppState>, input: SeedInput) -> ApiResult<SeedOutput> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        let summary = setup_service::seed(
+            &**be,
+            &SeedOptions {
+                accounts: input.accounts,
+                date: input.date,
+            },
+        )?;
+        Ok(SeedOutput {
+            seeded: summary.seeded,
+        })
     })
+    .await
 }
