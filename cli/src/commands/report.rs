@@ -4,7 +4,7 @@ use money_core::services::report_service;
 use money_core::Result;
 
 use crate::commands::helpers;
-use tabled::settings::object::Rows;
+use tabled::settings::object::Columns;
 use tabled::settings::{Alignment, Style};
 use tabled::Table;
 use tabled::Tabled;
@@ -109,8 +109,9 @@ pub fn run(args: ReportArgs) -> Result<()> {
         }
 
         let mut table = Table::new(rows);
-        table.with(Style::ascii());
-        table.modify(Rows::first(), Alignment::center_vertical());
+        table.with(Style::rounded());
+        // Amounts, percentage and count right-aligned so the digits line up.
+        table.modify(Columns::new(1..), Alignment::right());
         println!("{}", table);
         println!();
     }
