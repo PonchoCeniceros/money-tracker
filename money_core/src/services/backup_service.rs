@@ -1,5 +1,5 @@
 //! Backups: the whole ledger as a SQL file that restores into a fresh Supabase
-//! project (after the `supabase/sql/` schema files), plus the lazy 7-day
+//! project (after the `setup/sql/` schema files), plus the lazy 7-day
 //! automatic backup. Contract: specs/002-remove-mirror-backup/contracts/backup-contract.md.
 
 use std::path::{Path, PathBuf};
@@ -51,11 +51,11 @@ pub fn render_sql(s: &LedgerSnapshot, email: &str, created_at: &str) -> String {
          -- movimientos:     {n}\n\
          --\n\
          -- Restaurar (proyecto de Supabase nuevo y vacío):\n\
-         --   1. Aplica en el SQL Editor, en orden, supabase/sql/0001_setup.sql hasta {v:04}_*.sql.\n\
+         --   1. Aplica en el SQL Editor, en orden, setup/sql/0001_setup.sql hasta {v:04}_*.sql.\n\
          --   2. Crea tu usuario en Authentication → Users (puede ser el mismo email).\n\
          --   3. Si el email es otro, cámbialo en la línea marcada con «RESTAURAR COMO».\n\
          --   4. Pega este archivo completo en el SQL Editor y dale Run.\n\
-         -- Detalle: supabase/README.md\n\
+         -- Detalle: setup/README.md\n\
          \n\
          begin;\n\
          \n\
@@ -391,11 +391,11 @@ mod tests {
 -- movimientos:     3
 --
 -- Restaurar (proyecto de Supabase nuevo y vacío):
---   1. Aplica en el SQL Editor, en orden, supabase/sql/0001_setup.sql hasta 0002_*.sql.
+--   1. Aplica en el SQL Editor, en orden, setup/sql/0001_setup.sql hasta 0002_*.sql.
 --   2. Crea tu usuario en Authentication → Users (puede ser el mismo email).
 --   3. Si el email es otro, cámbialo en la línea marcada con «RESTAURAR COMO».
 --   4. Pega este archivo completo en el SQL Editor y dale Run.
--- Detalle: supabase/README.md
+-- Detalle: setup/README.md
 
 begin;
 

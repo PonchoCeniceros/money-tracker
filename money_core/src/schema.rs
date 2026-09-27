@@ -1,10 +1,10 @@
 //! The Supabase schema version this build expects.
 //!
-//! Schema changes ship as numbered files in `supabase/sql/` (`NNNN_name.sql`), applied by
+//! Schema changes ship as numbered files in `setup/sql/` (`NNNN_name.sql`), applied by
 //! hand in the Supabase SQL Editor. Each file checks it follows the previous version and
 //! bumps `public.schema_version`; the app refuses to run against any other version.
 
-/// Must equal the highest-numbered file in `supabase/sql/` (enforced by a test below).
+/// Must equal the highest-numbered file in `setup/sql/` (enforced by a test below).
 pub const EXPECTED_SCHEMA_VERSION: i64 = 2;
 
 /// `Ok` only when the database is exactly at the version this build expects.
@@ -29,7 +29,7 @@ mod tests {
     fn database_behind_names_the_file_to_apply() {
         let msg = check_schema(1, 2).unwrap_err().to_string();
         assert!(msg.contains("versión 1") && msg.contains("espera la 2"), "{msg}");
-        assert!(msg.contains("supabase/sql/0002_*.sql"), "{msg}");
+        assert!(msg.contains("setup/sql/0002_*.sql"), "{msg}");
         let msg = check_schema(1, 3).unwrap_err().to_string();
         assert!(msg.contains("0002_*.sql a 0003_*.sql"), "{msg}");
     }
@@ -43,9 +43,9 @@ mod tests {
 
     #[test]
     fn expected_version_matches_the_latest_schema_file() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../supabase/sql");
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../setup/sql");
         let mut numbers: Vec<i64> = std::fs::read_dir(dir)
-            .expect("supabase/sql exists")
+            .expect("setup/sql exists")
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .filter(|n| n.ends_with(".sql"))
             .map(|name| {
@@ -69,7 +69,7 @@ mod tests {
         assert_eq!(
             numbers.last().copied(),
             Some(EXPECTED_SCHEMA_VERSION),
-            "bump EXPECTED_SCHEMA_VERSION when adding supabase/sql/NNNN_*.sql"
+            "bump EXPECTED_SCHEMA_VERSION when adding setup/sql/NNNN_*.sql"
         );
     }
 }

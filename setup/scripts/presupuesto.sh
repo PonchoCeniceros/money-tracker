@@ -16,11 +16,11 @@
 # en vez de duplicarlo.
 #
 # Uso:
-#   chmod +x scripts/presupuesto.sh
-#   MONEY_TRACKER_CONFIG=/tmp/mt-local/config.toml ./scripts/presupuesto.sh   # primero contra un Supabase local
-#   ./scripts/presupuesto.sh                                                    # ya validado, contra tu Supabase
+#   chmod +x setup/scripts/presupuesto.sh
+#   MONEY_TRACKER_CONFIG=/tmp/mt-local/config.toml ./setup/scripts/presupuesto.sh   # primero contra un Supabase local
+#   ./setup/scripts/presupuesto.sh                                                    # ya validado, contra tu Supabase
 #
-# El Supabase local se levanta con `supabase start` (ver supabase/README.md, sección 5).
+# El Supabase local se levanta con `supabase start` (ver setup/README.md, sección 5).
 #
 set -euo pipefail
 

@@ -13,11 +13,11 @@
 # git) — llena las variables de la sección 0 antes de correrlo.
 #
 # Uso:
-#   chmod +x scripts/setup_inicial.sh
-#   MONEY_TRACKER_CONFIG=/tmp/mt-local/config.toml ./scripts/setup_inicial.sh   # primero contra un Supabase local
-#   ./scripts/setup_inicial.sh                                                    # ya validado, contra tu Supabase
+#   chmod +x setup/scripts/setup_inicial.sh
+#   MONEY_TRACKER_CONFIG=/tmp/mt-local/config.toml ./setup/scripts/setup_inicial.sh   # primero contra un Supabase local
+#   ./setup/scripts/setup_inicial.sh                                                    # ya validado, contra tu Supabase
 #
-# El Supabase local se levanta con `supabase start` (ver supabase/README.md, sección 5).
+# El Supabase local se levanta con `supabase start` (ver setup/README.md, sección 5).
 #
 set -euo pipefail
 

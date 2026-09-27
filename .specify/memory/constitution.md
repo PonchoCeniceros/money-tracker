@@ -96,10 +96,10 @@ para razonarlo y corregirlo a mano.
   manual DEBE hacerse contra un Supabase desechable (por ejemplo `supabase start`), con
   `MONEY_TRACKER_CONFIG` apuntando a una configuración aparte; el proyecto de Supabase del usuario NO
   DEBE usarse para pruebas.
-- Los cambios al esquema de Supabase DEBEN ir en un archivo nuevo y numerado de `supabase/sql/`; un
+- Los cambios al esquema de Supabase DEBEN ir en un archivo nuevo y numerado de `setup/sql/`; un
   archivo ya aplicado NO DEBE editarse. Cada archivo nuevo DEBE verificar la versión anterior, subir
   `schema_version`, subir `EXPECTED_SCHEMA_VERSION` en `money_core/src/schema.rs`, y pasar
-  `supabase/tests/verify.sql` en un Supabase desechable antes de aplicarse en producción.
+  `setup/tests/verify.sql` en un Supabase desechable antes de aplicarse en producción.
 - `AGENTS.md` es el archivo guía de desarrollo en tiempo real y DEBE consultarse para estructura del
   proyecto, convenciones y comandos.
 
@@ -121,9 +121,11 @@ eliminarse en silencio.
 
 ### Registro de enmiendas
 
+- **2.0.1** (2026-09-27): aclaración de rutas (PATCH). Los archivos de esquema y `verify.sql` se mueven de
+  `supabase/` a `setup/sql/` y `setup/tests/`; no cambia ninguna regla.
 - **2.0.0** (2026-09-26, spec `002-remove-mirror-backup`): Supabase como único almacén. Cambian los
   principios II, III, IV y V y el portón de pruebas y verificación; se agrega el portón de archivos de
   esquema. Deprecada: la cláusula de rechazo de la base legacy del principio V.
 - **1.0.1** (2026-09-17): versión ratificada.
 
-**Versión**: 2.0.0 | **Ratificada**: 2026-09-17 | **Última enmienda**: 2026-09-26
+**Versión**: 2.0.1 | **Ratificada**: 2026-09-17 | **Última enmienda**: 2026-09-27

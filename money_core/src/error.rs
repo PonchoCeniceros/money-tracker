@@ -38,11 +38,11 @@ fn schema_mismatch_message(found: i64, expected: i64) -> String {
     );
     if found < expected {
         let files = if expected - found == 1 {
-            format!("supabase/sql/{expected:04}_*.sql")
+            format!("setup/sql/{expected:04}_*.sql")
         } else {
-            format!("en orden supabase/sql/{:04}_*.sql a {expected:04}_*.sql", found + 1)
+            format!("en orden setup/sql/{:04}_*.sql a {expected:04}_*.sql", found + 1)
         };
-        format!("{head} Aplica {files} en el SQL Editor (ver supabase/README.md).")
+        format!("{head} Aplica {files} en el SQL Editor (ver setup/README.md).")
     } else {
         format!("{head} Actualiza la app (README, sección 1.6).")
     }

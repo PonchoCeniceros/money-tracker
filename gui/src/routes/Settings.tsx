@@ -172,7 +172,7 @@ function BackupCard() {
       <h3>Respaldo</h3>
       <p className={ui.muted}>
         Un archivo SQL con todo tu libro contable. Se restaura en un proyecto de Supabase nuevo (ver
-        supabase/README.md). Si el último tiene más de 7 días, se hace uno solo al abrir la app.
+        setup/README.md). Si el último tiene más de 7 días, se hace uno solo al abrir la app.
       </p>
       <p>
         Último respaldo:{" "}

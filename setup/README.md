@@ -1,20 +1,26 @@
-# Esquema de Supabase de money-tracker
+# Setup de money-tracker: esquema de Supabase y scripts
 
 Todo el libro contable vive en tu proyecto de Supabase. Esta carpeta tiene lo necesario para crearlo, cambiarlo sin
 riesgos y reconstruirlo desde un respaldo.
 
 ```
-supabase/
-  sql/
+setup/
+  sql/                        # SOLO archivos de esquema, en orden
     0001_setup.sql            # tablas, vistas, RLS, triggers y apply_entries
     0002_schema_version.sql   # versión de esquema + correcciones de seguridad y validación
   tests/
     verify.sql                # comprueba que el esquema rechaza lo que debe (termina en ROLLBACK)
+  scripts/                    # opcionales: cargar tus propios datos con el CLI
+    setup_inicial.sh          # cuentas, saldos iniciales y configuración
+    presupuesto.sh            # presupuestos del mes
   README.md                   # esta guía
 ```
 
+Lo de `sql/` es **obligatorio** (la app se niega a trabajar si el esquema no está en la versión que espera). Lo de
+`scripts/` es **opcional**: atajos para cargar tus datos iniciales en vez de teclear cada comando (sección 6).
+
 No se usa el sistema de migraciones del CLI de Supabase (`supabase db push`): los archivos se pegan a mano en el
-**SQL Editor** del dashboard. Por eso viven en `sql/` y no en `migrations/`.
+**SQL Editor** del dashboard. Por eso viven en `setup/sql/` y no en `supabase/migrations/`.
 
 ## 1. Proyecto nuevo
 
@@ -124,10 +130,10 @@ NOTICE:  verify.sql: 14/14 rechazos confirmados
 mkdir -p /tmp/mt-local && cd /tmp/mt-local && supabase init
 supabase start -x realtime,storage-api,imgproxy,inbucket,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 # aplica los archivos como lo haría el SQL Editor:
-for f in ~/Projects/money-tracker/supabase/sql/*.sql; do
+for f in ~/Projects/money-tracker/setup/sql/*.sql; do   # solo esquema: verify.sql vive en setup/tests/
   docker exec -i supabase_db_mt-local psql -U postgres -v ON_ERROR_STOP=1 -q < "$f"
 done
-docker exec -i supabase_db_mt-local psql -U postgres -q < ~/Projects/money-tracker/supabase/tests/verify.sql
+docker exec -i supabase_db_mt-local psql -U postgres -q < ~/Projects/money-tracker/setup/tests/verify.sql
 ```
 
 Para usar la app contra él, crea un `config.toml` aparte y apunta la app ahí con `MONEY_TRACKER_CONFIG`, para no tocar
@@ -148,3 +154,21 @@ curl -s "$URL/rest/v1/sync_state?select=*" -H "apikey: $KEY" -H "Authorization: 
 curl -s -X POST "$URL/rest/v1/rpc/ledger_status" -H "apikey: $KEY" -H "Authorization: Bearer $KEY"
 # → {"code":"42501", … "permission denied for function ledger_status"}
 ```
+
+## 6. Scripts de carga inicial (opcionales)
+
+`scripts/` tiene dos atajos que llaman al CLI para cargar tus datos, en lugar de teclear cada comando. Los montos no
+van en el repo: llena las variables al inicio de cada script antes de correrlo.
+
+| Script | Qué carga |
+|---|---|
+| `scripts/setup_inicial.sh` | Cuentas, saldos iniciales y configuración por defecto |
+| `scripts/presupuesto.sh` | Presupuestos del mes |
+
+Pruébalos primero contra un Supabase local (sección 5), apuntando la app a otra configuración:
+
+```sh
+MONEY_TRACKER_CONFIG=/tmp/mt-local/config.toml ./setup/scripts/setup_inicial.sh
+```
+
+Y cuando el resultado sea el esperado, contra tu proyecto: `./setup/scripts/setup_inicial.sh`.

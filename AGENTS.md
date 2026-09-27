@@ -13,8 +13,9 @@ Rust workspace with three crates plus a frontend package:
   `ApiError` (`AppError` isn't `Serialize`, so every command returns `ApiError` instead). `gui/src/` —
   React + TS frontend, CSS Modules, no router/query library (IPC is local, so a global revision counter in
   `hooks/useApi.ts` triggers refetch after every mutation).
-- `supabase/` — the Supabase schema as numbered SQL files applied by hand in the SQL Editor, plus
-  `tests/verify.sql` and a guide (`supabase/README.md`).
+- `setup/` — everything you run once: the Supabase schema as numbered SQL files applied by hand in the SQL
+  Editor (`setup/sql/`, schema files ONLY), `setup/tests/verify.sql`, the optional data-loading scripts
+  (`setup/scripts/`) and a guide (`setup/README.md`).
 
 **Supabase is the only store.** There is no local database, no local mode and no mirror (spec
 `002-remove-mirror-backup`). Without `supabase_url` + key the app fails with `AppError::NotConfigured`.
@@ -32,7 +33,7 @@ npx tsc --noEmit                            # type-check the frontend (run from 
 **Never run the app against the default config** (`~/.money-tracker/config.toml` points at the user's
 production Supabase). A project hook (`.claude/hooks/guard-production.py`) blocks `money-tracker`,
 `cargo run`, `tauri dev` and production `curl`s unless `MONEY_TRACKER_CONFIG` points elsewhere. For manual
-verification use a local Supabase (`supabase start`, see `supabase/README.md` §5) and
+verification use a local Supabase (`supabase start`, see `setup/README.md` §5) and
 `MONEY_TRACKER_CONFIG=/tmp/mt-local/config.toml` with `token_storage = "file"`.
 
 Configuration (`money_core::settings`, all under `config_dir()` = `~/.money-tracker/` or the parent of
@@ -70,7 +71,7 @@ money_core/
   src/
     rules.rs            # accounting rules, pure: overdraft, credit limit, one emergency account,
                         # account shape, budget > 0, concept type, entry-update shape, emergency split
-    schema.rs           # EXPECTED_SCHEMA_VERSION + check_schema; a test pins it to supabase/sql/
+    schema.rs           # EXPECTED_SCHEMA_VERSION + check_schema; a test pins it to setup/sql/
     period.rs           # Period ("YYYY-MM") + today()/validate_date() — single source of truth for dates
     settings.rs         # Settings (config.toml + env), TokenStorage, config_dir/backups_dir/last_backup_path
     auth.rs             # SupabaseAuth (GoTrue): login/refresh, token in keychain (per project) or file
@@ -106,10 +107,14 @@ gui/
       error.rs          # ApiError, From<AppError> (kinds not_configured / auth_needed / schema_mismatch gate Connect)
       commands/         # one file per command group; sync.rs = ledger_status/connection_info/login/logout,
                         # backup.rs = backup_create/backup_auto
-supabase/
+setup/
   sql/0001_setup.sql, 0002_schema_version.sql   # applied in order in the SQL Editor; never edit an applied one
   tests/verify.sql                               # 14 checks of what the schema must reject; ends in ROLLBACK
+  scripts/setup_inicial.sh, presupuesto.sh       # optional: load your own data through the CLI
   README.md
+README.md            # what it is, concepts, CLI/GUI usage, backups, examples (user-facing)
+docs/INSTALACION.md  # install, Supabase setup, config files, update/reinstall, restore, troubleshooting
+docs/ARQUITECTURA.md # internals: crates, rules, storage, GUI internals, backups, tests
 Dashboard_Financiero.xlsx / .ods   # LEGACY dashboard, read-only reference — no longer imported
 ```
 
@@ -201,15 +206,15 @@ exist).
 
 ## Schema versioning
 
-Schema changes are numbered files in `supabase/sql/` (`NNNN_name.sql`), applied by hand in the Supabase
+Schema changes are numbered files in `setup/sql/` (`NNNN_name.sql`), applied by hand in the Supabase
 SQL Editor (the Supabase CLI migration system is **not** used). Rules:
 - An applied file is never edited; every change is a new file with the next number.
 - Each file (from 0003) starts with a guard that aborts unless `public.schema_version` is the previous
   number, and ends by setting it to its own number, all in one transaction (template in
-  `supabase/README.md` §3).
+  `setup/README.md` §3).
 - Bump `money_core::schema::EXPECTED_SCHEMA_VERSION`; a test fails if it doesn't match the highest file.
 - New functions: `revoke execute ... from public, anon` and `grant` only to `authenticated`.
-- Run `supabase/tests/verify.sql` on a local Supabase before applying to production; apply the schema
+- Run `setup/tests/verify.sql` on a local Supabase before applying to production; apply the schema
   file to production before installing the new app.
 
 At connect time the app compares versions and fails with `AppError::SchemaMismatch`, whose message says
