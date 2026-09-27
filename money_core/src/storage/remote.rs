@@ -162,7 +162,6 @@ impl SupabaseBackend {
         let status = resp.status();
         let text = resp.text().map_err(AppError::Network)?;
         if !status.is_success() {
-            eprintln!("[remote] HTTP {} -> {}", path, text);
             return Err(map_postgrest_error(status, &text));
         }
         serde_json::from_str(&text).map_err(|_| AppError::Remote(format!("bad JSON from {path}")))

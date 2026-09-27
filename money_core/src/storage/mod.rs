@@ -24,6 +24,9 @@ use crate::models::{
 /// 1. No URL or no publishable key → [`AppError::NotConfigured`], without touching
 ///    the network or creating any file.
 /// 2. One `ledger_status()` round trip, which also proves the session is valid.
+/// 3. The schema version must be the one this build expects
+///    ([`crate::schema::EXPECTED_SCHEMA_VERSION`]); otherwise `SchemaMismatch`, whose
+///    message says which file to apply or that the app needs updating.
 pub fn connect(settings: &crate::settings::Settings) -> Result<Box<dyn LedgerBackend>> {
     let (url, key) = match (&settings.supabase_url, &settings.supabase_publishable_key) {
         (Some(u), Some(k)) if !u.trim().is_empty() && !k.trim().is_empty() => (u, k),
@@ -37,7 +40,8 @@ pub fn connect(settings: &crate::settings::Settings) -> Result<Box<dyn LedgerBac
         }
     };
     let be = remote::SupabaseBackend::new(url, key);
-    be.status()?;
+    let status = be.status()?;
+    crate::schema::check_schema(status.schema_version, crate::schema::EXPECTED_SCHEMA_VERSION)?;
     Ok(Box::new(be))
 }
 

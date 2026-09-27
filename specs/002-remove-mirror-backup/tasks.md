@@ -305,25 +305,25 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
 
 ### Tests for User Story 3
 
-- [ ] T046 [P] [US3] Primero: en `money_core/src/schema.rs`, pruebas de `check_schema(found, expected) -> Result<()>`:
+- [X] T046 [P] [US3] Primero: en `money_core/src/schema.rs`, pruebas de `check_schema(found, expected) -> Result<()>`:
       igual → `Ok`; `found < expected` → `SchemaMismatch`, con un mensaje que nombra el archivo
       `supabase/sql/000{expected}_…` a aplicar; `found > expected` → `SchemaMismatch`, con un mensaje de "actualiza la
       app".
 
 ### Implementation for User Story 3
 
-- [ ] T047 [US3] Implementar `check_schema` en `money_core/src/schema.rs` y usarlo como paso 3 de
+- [X] T047 [US3] Implementar `check_schema` en `money_core/src/schema.rs` y usarlo como paso 3 de
       `storage::connect` (`money_core/src/storage/mod.rs`), con `status()?.schema_version`. T046 pasa.
-- [ ] T048 [US3] CLI: en `cli/src/commands/db.rs`, la línea "Esquema" de `Remote Status` muestra `versión N (la app
+- [X] T048 [US3] CLI: en `cli/src/commands/db.rs`, la línea "Esquema" de `Remote Status` muestra `versión N (la app
       espera M)`; `SchemaMismatch` se imprime con los mensajes de "Esquema atrasado" y "App atrasada" de
       [cli-gui-contract.md](contracts/cli-gui-contract.md).
-- [ ] T049 [US3] GUI: en `gui/src/App.tsx` y `gui/src/routes/Connect.tsx`, el kind `schema_mismatch` muestra el mensaje
+- [X] T049 [US3] GUI: en `gui/src/App.tsx` y `gui/src/routes/Connect.tsx`, el kind `schema_mismatch` muestra el mensaje
       de versión en lugar del formulario. En Ajustes se muestra la versión del esquema.
-- [ ] T050 [P] [US3] Crear `supabase/tests/verify.sql` según "`supabase/tests/verify.sql`" de
+- [X] T050 [P] [US3] Crear `supabase/tests/verify.sql` según "`supabase/tests/verify.sql`" de
       [schema-contract.md](contracts/schema-contract.md): todo dentro de `begin; … rollback;`, los 8 casos mínimos, cada
       uno en un bloque que espera la excepción (si no la hay, `raise exception 'FALLÓ: …'`), y al final `raise notice
       'verify.sql: N/N rechazos confirmados'`.
-- [ ] T051 [P] [US3] Crear `supabase/README.md` (FR-020) con:
+- [X] T051 [P] [US3] Crear `supabase/README.md` (FR-020) con:
       - qué hace cada tabla, vista y función (a partir de `0001` y `0002`);
       - cómo aplicar un archivo en el SQL Editor y cómo ver la versión (`select * from public.schema_version`);
       - la plantilla para un archivo nuevo (la estructura obligatoria de
@@ -333,9 +333,13 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
       - el procedimiento de restauración, con enlace al formato del respaldo.
 
       Tablas de 145 caracteres o menos.
-- [ ] T052 [US3] **(manual)** En el proyecto de prueba: volver a correr `0002` (debe rechazarse sin cambios), correr
+- [X] T052 [US3] **(manual)** En el proyecto de prueba: volver a correr `0002` (debe rechazarse sin cambios), correr
       `verify.sql` (N/N), hacer las dos llamadas `curl` sin sesión (quickstart §2), y simular el esquema desfasado
       (quickstart §3, último punto; después regresar la versión a `2`).
+      **Hecho (2026-09-26) en el Supabase local**: `0002` repetido se rechaza sin cambios; `verify.sql` da 14/14 y no
+      deja rastro; las llamadas `curl` sin sesión se rechazan; los desfases (versión 1, versión 3 y un proyecto sin
+      `0002`) dan el mensaje correcto. Prueba de control: con la `apply_entries` de `0001` (la de producción),
+      `verify.sql` se detiene en "FALLÓ: se aceptó un cargo sobre el límite de crédito".
 
 **Checkpoint**: aplicar archivos fuera de orden es imposible, y la app avisa de cualquier desfase.
 

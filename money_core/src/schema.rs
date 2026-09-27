@@ -7,9 +7,39 @@
 /// Must equal the highest-numbered file in `supabase/sql/` (enforced by a test below).
 pub const EXPECTED_SCHEMA_VERSION: i64 = 2;
 
+/// `Ok` only when the database is exactly at the version this build expects.
+pub fn check_schema(found: i64, expected: i64) -> crate::Result<()> {
+    if found == expected {
+        Ok(())
+    } else {
+        Err(crate::AppError::SchemaMismatch { found, expected })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matching_version_is_ok() {
+        check_schema(2, 2).unwrap();
+    }
+
+    #[test]
+    fn database_behind_names_the_file_to_apply() {
+        let msg = check_schema(1, 2).unwrap_err().to_string();
+        assert!(msg.contains("versión 1") && msg.contains("espera la 2"), "{msg}");
+        assert!(msg.contains("supabase/sql/0002_*.sql"), "{msg}");
+        let msg = check_schema(1, 3).unwrap_err().to_string();
+        assert!(msg.contains("0002_*.sql a 0003_*.sql"), "{msg}");
+    }
+
+    #[test]
+    fn database_ahead_asks_to_update_the_app() {
+        let err = check_schema(3, 2).unwrap_err();
+        assert!(matches!(err, crate::AppError::SchemaMismatch { found: 3, expected: 2 }));
+        assert!(err.to_string().contains("Actualiza la app"));
+    }
 
     #[test]
     fn expected_version_matches_the_latest_schema_file() {
