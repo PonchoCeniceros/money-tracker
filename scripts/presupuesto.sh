@@ -17,8 +17,10 @@
 #
 # Uso:
 #   chmod +x scripts/presupuesto.sh
-#   MONEY_TRACKER_DB=/tmp/prueba.db ./scripts/presupuesto.sh   # primero en un archivo descartable
-#   ./scripts/presupuesto.sh                                    # ya validado, contra ~/.money-tracker/data.db
+#   MONEY_TRACKER_CONFIG=/tmp/mt-local/config.toml ./scripts/presupuesto.sh   # primero contra un Supabase local
+#   ./scripts/presupuesto.sh                                                    # ya validado, contra tu Supabase
+#
+# El Supabase local se levanta con `supabase start` (ver supabase/README.md, sección 5).
 #
 set -euo pipefail
 

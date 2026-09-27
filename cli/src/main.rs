@@ -33,7 +33,7 @@ enum Commands {
     Config(commands::config::ConfigArgs),
     /// Load opening balances into a fresh database
     Setup(commands::setup::SetupArgs),
-    /// Inspect or reset the database file
+    /// Back up the ledger and manage the Supabase connection
     Db(commands::db::DbArgs),
 }
 

@@ -7,6 +7,11 @@ y solo al final se toca producción (research R16).
 
 ## 0. Prerrequisitos
 
+> **Actualización (2026-09-26)**: no se creó un segundo proyecto de Supabase. Donde esta guía dice "proyecto de
+> prueba", se usó un **Supabase local** con Docker (`supabase start` en `/tmp/mt-local`, con
+> `MONEY_TRACKER_CONFIG=/tmp/mt-local/config.toml`). Los pasos están en `supabase/README.md`, sección 5. Los
+> resultados de cada validación quedaron anotados en `tasks.md` (T035, T045, T052).
+
 - Un segundo proyecto de Supabase, el "de prueba", con su URL y su key publicable, y un usuario creado
   en *Authentication → Users*.
 - Binario compilado desde esta rama:

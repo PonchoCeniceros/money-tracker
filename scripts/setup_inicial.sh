@@ -14,8 +14,10 @@
 #
 # Uso:
 #   chmod +x scripts/setup_inicial.sh
-#   MONEY_TRACKER_DB=/tmp/prueba.db ./scripts/setup_inicial.sh   # primero en un archivo descartable
-#   ./scripts/setup_inicial.sh                                    # ya validado, contra ~/.money-tracker/data.db
+#   MONEY_TRACKER_CONFIG=/tmp/mt-local/config.toml ./scripts/setup_inicial.sh   # primero contra un Supabase local
+#   ./scripts/setup_inicial.sh                                                    # ya validado, contra tu Supabase
+#
+# El Supabase local se levanta con `supabase start` (ver supabase/README.md, sección 5).
 #
 set -euo pipefail
 
@@ -82,7 +84,7 @@ fi
 #     No hay comando para editar target_amount después de crear la cuenta, y
 #     archivar no libera el nombre (UNIQUE incluso archivada) — si algún día
 #     quieres ponerle una meta, es un `UPDATE accounts SET target_amount = ...
-#     WHERE name = 'Patrimonio'` directo en SQLite, no hay otra forma hoy.
+#     WHERE name = 'Patrimonio'` en el SQL Editor de Supabase, no hay otra forma hoy.
 # ---------------------------------------------------------------------------
 $MT account add Patrimonio --kind target --yes
 

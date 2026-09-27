@@ -128,9 +128,11 @@ terminar esta fase, y todas las pruebas deben pasar.
       [storage-contract.md](contracts/storage-contract.md), y en `SupabaseBackend` (`money_core/src/storage/remote.rs`):
       `status` → `POST /rest/v1/rpc/ledger_status`; `export_snapshot` → `POST /rest/v1/rpc/export_ledger`, mapeado a
       `LedgerSnapshot`; `session_email` → `None` por ahora (T021 lo completa).
-- [ ] T019 **(manual)** En el SQL Editor del proyecto de Supabase **de prueba**, aplicar `supabase/sql/0001_setup.sql` y
+- [X] T019 **(manual)** En el SQL Editor del proyecto de Supabase **de prueba**, aplicar `supabase/sql/0001_setup.sql` y
       luego `0002_schema_version.sql`; confirmar que `select * from public.schema_version` devuelve `2`
       (quickstart §0 y §2, pasos 1–2).
+      **Hecho (2026-09-26) en un Supabase local** en lugar de un proyecto de prueba: `0001` y `0002` aplican sin
+      errores y `schema_version` = 2.
 
 **Checkpoint**: `cargo test --workspace` pasa, con las pruebas sobre `MemoryBackend` y SQLite todavía presente. El
 proyecto de prueba ya está en la versión de esquema 2.
@@ -223,6 +225,9 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
 - [ ] T035 [US1] **(manual)** Validar contra el proyecto de prueba: quickstart §1, §3 (sin el punto de esquema
       desfasado) y §7 (primeros tres puntos). Incluye SC-001 (`ls ~/.money-tracker/*.db` no cambia) y SC-010 con
       `token_storage = "file"`.
+      **Parcial (2026-09-26)**: CLI validado contra el Supabase local (sin configuración, sesión en archivo sin tocar
+      el llavero, reglas, SQL como segunda defensa, filtro por período, borrado que sube la revisión; `data.db` y
+      `config.toml` de producción sin cambios). Pendiente del usuario: `db remote login` interactivo y la GUI.
 
 **Checkpoint**: la app funciona solo con Supabase y no existe ningún código de SQLite.
 
@@ -368,7 +373,7 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T056 [P] Reescribir `README.md` (FR-022):
+- [X] T056 [P] Reescribir `README.md` (FR-022):
       - Supabase pasa a ser **requisito** y va en el camino principal de instalación (crear proyecto, aplicar
         `supabase/sql/*` en el SQL Editor, `db remote login`, `token_storage`); se quita el apéndice "opcional";
       - eliminar modo local, espejo, `MONEY_TRACKER_DB`, `db status`/`db reset`, `db remote sync`/`migrate` y `supabase
@@ -380,27 +385,30 @@ CLI y GUI con las mismas cifras, ningún `.db` creado ni modificado, y un mensaj
 
       Conservar el orden intro → instalación → core → CLI → GUI → ejemplos, con tablas y líneas de 145 caracteres o
       menos.
-- [ ] T057 [P] Actualizar `AGENTS.md`:
+- [X] T057 [P] Actualizar `AGENTS.md`:
       - estructura (sin `rusqlite`; con `rules.rs`, `memory.rs`, `schema.rs` y los servicios nuevos);
       - build y pruebas (conteo nuevo; pruebas con `MemoryBackend`, sin `MONEY_TRACKER_DB`);
       - layout; comandos del CLI;
       - reemplazar "Schema versioning" por el flujo de `supabase/sql/` + `schema_version` +
         `EXPECTED_SCHEMA_VERSION`;
       - "Data model", con el esquema de Supabase.
-- [ ] T058 [P] Borrar `scripts/migrar_a_supabase.sh`. En `scripts/setup_inicial.sh` y `scripts/presupuesto.sh`, cambiar
+- [X] T058 [P] Borrar `scripts/migrar_a_supabase.sh`. En `scripts/setup_inicial.sh` y `scripts/presupuesto.sh`, cambiar
       los comentarios que recomiendan `MONEY_TRACKER_DB` por `MONEY_TRACKER_CONFIG`, apuntando a un proyecto de prueba.
-- [ ] T059 Enmendar `.specify/memory/constitution.md` de 1.0.1 a 2.0.0 según r14:
+- [X] T059 Enmendar `.specify/memory/constitution.md` de 1.0.1 a 2.0.0 según r14:
       - principio II sin "modo WAL"; cláusula legacy del principio V declarada **deprecada**, no borrada;
       - portones de calidad: pruebas con `MemoryBackend`, verificación en un proyecto de prueba, "no editar un archivo
         de esquema aplicado" y "subir `EXPECTED_SCHEMA_VERSION` + `verify.sql` antes de producción";
       - registro de la enmienda con la versión anterior, la nueva y las secciones cambiadas;
       - actualizar la fecha de "Última enmienda".
-- [ ] T060 Portones finales:
+- [X] T060 Portones finales:
       - `cargo build --workspace`, `cargo test --workspace` y `cargo clippy --workspace --all-targets` sin warnings;
       - `npx tsc --noEmit` en `gui/`;
       - `cargo tree -p money_core` sin `clap`, `dialoguer`, `tabled`, `tauri` ni `rusqlite`.
 
       Comparar el conteo de pruebas contra la línea base de T001, explicando las diferencias con la tabla r4.
+      **Hecho (2026-09-26)**: todo en verde. Pruebas: 54 (línea base) − 10 (tabla r4) + 38 nuevas = 82. Las nuevas son
+      13 de `rules.rs`, 7 de `backup_service`, 4 de `schema.rs`, 3 de auth y settings, 3 de `remote.rs`, 3 del
+      modelo, 2 de `entry_service`, 2 de budget y concept, y 1 de `connect`.
 - [ ] T061 **(manual)** Puesta en producción, quickstart §8 en orden:
       1. copia previa en JSON;
       2. aplicar `0002` a producción;

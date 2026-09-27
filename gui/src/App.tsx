@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { accountsApi } from "./api/accounts";
-import { ApiCallError } from "./api/client";
+import { ApiCallError, SESSION_KINDS, SESSION_LOST_EVENT } from "./api/client";
 import { CONNECT_KINDS, syncApi } from "./api/sync";
 import { backupApi } from "./api/backup";
 import { useApi, useRefetchOnFocus, bumpRevision } from "./hooks/useApi";
@@ -20,6 +20,14 @@ type Connection =
   | { state: "checking" }
   | { state: "ok" }
   | { state: "needs_connect"; kind: string; message: string };
+
+/** Core messages point at the CLI (`db remote login`); in the GUI, say it in GUI terms. */
+function connectMessage(kind: string, message: string): string {
+  if (SESSION_KINDS.includes(kind)) {
+    return "Tu sesión de Supabase expiró o no está iniciada. Inicia sesión de nuevo para continuar.";
+  }
+  return message;
+}
 
 type View = "dashboard" | "register" | "accounts" | "movements" | "budgets" | "settings";
 
@@ -46,7 +54,7 @@ function App() {
       setConnection({ state: "ok" });
     } catch (e) {
       if (e instanceof ApiCallError && CONNECT_KINDS.includes(e.kind)) {
-        setConnection({ state: "needs_connect", kind: e.kind, message: e.message });
+        setConnection({ state: "needs_connect", kind: e.kind, message: connectMessage(e.kind, e.message) });
       } else {
         // Network hiccups etc.: let the views show their own error banners.
         setConnection({ state: "ok" });
@@ -57,6 +65,17 @@ function App() {
   useEffect(() => {
     checkConnection();
   }, [checkConnection]);
+
+  // The session can die while the app is open (expired or revoked refresh token):
+  // any call that hits it sends us back to the Connect screen.
+  useEffect(() => {
+    const onLost = (e: Event) => {
+      const kind = (e as CustomEvent<string>).detail ?? "auth_needed";
+      setConnection({ state: "needs_connect", kind, message: connectMessage(kind, "") });
+    };
+    window.addEventListener(SESSION_LOST_EVENT, onLost);
+    return () => window.removeEventListener(SESSION_LOST_EVENT, onLost);
+  }, []);
 
   // Lazy automatic backup, once connected: never blocks the UI, only reports.
   const [backupNotice, setBackupNotice] = useState<{ ok: boolean; text: string } | null>(null);
