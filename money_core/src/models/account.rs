@@ -108,6 +108,22 @@ impl NewAccount {
     }
 }
 
+/// Raw account row with no balance. Deliberately NOT the shape read by the
+/// rest of the crate — `AccountBalance` (with the derived balance) is. This
+/// exists so a backend can fetch/apply accounts without paying for (or
+/// trusting) balance math; derivation happens in `storage::ledger` from
+/// `Account + entries`, the single source of truth.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Account {
+    pub id: i64,
+    pub name: String,
+    pub kind: AccountKind,
+    pub target_amount: Option<f64>,
+    pub credit_limit: Option<f64>,
+    pub liquid: bool,
+    pub archived: bool,
+}
+
 /// The only shape ever read back for an account — always carries its
 /// derived balance. There is deliberately no `Account` without a balance:
 /// reading an account without its balance was how `buckets.current_balance`
@@ -159,5 +175,32 @@ impl AccountBalance {
 
     pub fn is_asset(&self) -> bool {
         self.kind.is_asset()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Ported from db.rs `target_account_allows_open_ended_bucket` when the SQLite
+    // schema was removed; `spending_account_rejects_target_amount` and
+    // `only_one_active_emergency_account` now live in `rules.rs`.
+    #[test]
+    fn target_account_allows_open_ended_bucket() {
+        let bucket = NewAccount::target("Patrimonio", None).unwrap();
+        assert_eq!(bucket.kind, AccountKind::Target);
+        assert_eq!(bucket.target_amount, None);
+    }
+
+    #[test]
+    fn target_amount_must_be_positive_when_given() {
+        assert!(NewAccount::target("Vacaciones", Some(50000.0)).is_ok());
+        assert!(NewAccount::target("Vacaciones", Some(0.0)).is_err());
+    }
+
+    #[test]
+    fn restricted_accounts_are_not_liquid() {
+        assert!(NewAccount::spending("debito").liquid);
+        assert!(!NewAccount::spending("vales").restricted().liquid);
     }
 }

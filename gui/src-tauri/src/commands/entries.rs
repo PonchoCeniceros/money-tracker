@@ -18,17 +18,20 @@ pub struct ExpenseInput {
 }
 
 #[tauri::command]
-pub fn add_expense(state: State<AppState>, input: ExpenseInput) -> ApiResult<i64> {
-    let conn = state.conn.lock().unwrap();
-    Ok(entry_service::add_expense(
-        &conn,
-        &input.date,
-        input.amount,
-        input.from_account_id,
-        &input.concept,
-        input.subconcept.as_deref(),
-        input.description.as_deref(),
-    )?)
+pub async fn add_expense(state: State<'_, AppState>, input: ExpenseInput) -> ApiResult<i64> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        Ok(entry_service::add_expense(
+            &**be,
+            &input.date,
+            input.amount,
+            input.from_account_id,
+            &input.concept,
+            input.subconcept.as_deref(),
+            input.description.as_deref(),
+        )?)
+    })
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -49,21 +52,24 @@ pub struct IncomeOutput {
 }
 
 #[tauri::command]
-pub fn add_income(state: State<AppState>, input: IncomeInput) -> ApiResult<IncomeOutput> {
-    let mut conn = state.conn.lock().unwrap();
-    let result = entry_service::add_income_with_emergency_split(
-        &mut conn,
-        &input.date,
-        input.amount,
-        input.to_account_id,
-        &input.concept,
-        input.description.as_deref(),
-        input.split_emergency,
-    )?;
-    Ok(IncomeOutput {
-        entry_id: result.entry_id,
-        emergency: result.emergency,
+pub async fn add_income(state: State<'_, AppState>, input: IncomeInput) -> ApiResult<IncomeOutput> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        let result = entry_service::add_income_with_emergency_split(
+            &**be,
+            &input.date,
+            input.amount,
+            input.to_account_id,
+            &input.concept,
+            input.description.as_deref(),
+            input.split_emergency,
+        )?;
+        Ok(IncomeOutput {
+            entry_id: result.entry_id,
+            emergency: result.emergency,
+        })
     })
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -76,16 +82,19 @@ pub struct TransferInput {
 }
 
 #[tauri::command]
-pub fn add_transfer(state: State<AppState>, input: TransferInput) -> ApiResult<i64> {
-    let conn = state.conn.lock().unwrap();
-    Ok(entry_service::add_transfer(
-        &conn,
-        &input.date,
-        input.amount,
-        input.from_account_id,
-        input.to_account_id,
-        input.description.as_deref(),
-    )?)
+pub async fn add_transfer(state: State<'_, AppState>, input: TransferInput) -> ApiResult<i64> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        Ok(entry_service::add_transfer(
+            &**be,
+            &input.date,
+            input.amount,
+            input.from_account_id,
+            input.to_account_id,
+            input.description.as_deref(),
+        )?)
+    })
+    .await
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -98,24 +107,28 @@ pub struct EntryFilterInput {
 }
 
 #[tauri::command]
-pub fn list_entries(state: State<AppState>, filter: EntryFilterInput) -> ApiResult<Vec<Entry>> {
-    let conn = state.conn.lock().unwrap();
-    let period = match filter.period {
-        Some(p) => Some(Period::parse(&p)?),
-        None => None,
-    };
-    let kind = match filter.kind {
-        Some(k) => Some(EntryKind::from_str(&k)?),
-        None => None,
-    };
-    let f = EntryFilter {
-        period,
-        kind,
-        concept: filter.concept,
-        account_id: filter.account_id,
-        limit: filter.limit,
-    };
-    Ok(entry_service::list(&conn, &f)?)
+pub async fn list_entries(state: State<'_, AppState>, filter: EntryFilterInput) -> ApiResult<Vec<Entry>> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        let period = match filter.period {
+            Some(p) => Some(Period::parse(&p)?),
+            None => None,
+        };
+        let kind = match filter.kind {
+            Some(k) => Some(EntryKind::from_str(&k)?),
+            None => None,
+        };
+        let f = EntryFilter {
+            period,
+            kind,
+            concept: filter.concept,
+            account_id: filter.account_id,
+            limit: filter.limit,
+            ..Default::default()
+        };
+        Ok(entry_service::list(&**be, &f)?)
+    })
+    .await
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -130,23 +143,44 @@ pub struct EntryUpdateInput {
 }
 
 #[tauri::command]
-pub fn update_entry(state: State<AppState>, id: i64, input: EntryUpdateInput) -> ApiResult<Entry> {
-    let conn = state.conn.lock().unwrap();
-    let upd = EntryUpdate {
-        date: input.date,
-        amount: input.amount,
-        concept: input.concept,
-        subconcept: input.subconcept,
-        description: input.description,
-        from_account_id: input.from_account_id,
-        to_account_id: input.to_account_id,
-    };
-    Ok(entry_service::update(&conn, id, &upd)?)
+pub async fn update_entry(state: State<'_, AppState>, id: i64, input: EntryUpdateInput) -> ApiResult<Entry> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        let upd = EntryUpdate {
+            date: input.date,
+            amount: input.amount,
+            concept: input.concept,
+            subconcept: input.subconcept,
+            description: input.description,
+            from_account_id: input.from_account_id,
+            to_account_id: input.to_account_id,
+        };
+        Ok(entry_service::update(&**be, id, &upd)?)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_entry(state: State<AppState>, id: i64) -> ApiResult<()> {
-    let conn = state.conn.lock().unwrap();
-    entry_service::delete(&conn, id)?;
-    Ok(())
+pub async fn delete_entry(state: State<'_, AppState>, id: i64) -> ApiResult<()> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        entry_service::delete(&**be, id)?;
+        Ok(())
+    })
+    .await
+}
+
+/// What an income of `amount` into `to_account_id` would put in the emergency
+/// fund (`null` = no split: restricted account, no fund, or nothing to split).
+#[tauri::command]
+pub async fn income_split_preview(
+    state: State<'_, AppState>,
+    to_account_id: i64,
+    amount: f64,
+) -> ApiResult<Option<entry_service::SplitPreview>> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        Ok(entry_service::emergency_split_preview(&**be, to_account_id, amount)?)
+    })
+    .await
 }

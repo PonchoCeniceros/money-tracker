@@ -1,89 +1,230 @@
-# money-tracker
+<h1 align="left">
+  <img src="https://github.com/PonchoCeniceros/money-tracker/blob/main/docs/icon.png" width="90" align="absmiddle">
+  &nbsp;
+  money-tracker
+</h1>
 
-Control de finanzas personales desde la terminal. Cuentas (efectivo, débito, vales, tarjeta de
-crédito), buckets de ahorro (fondo de emergencia + metas), presupuestos informativos.
+Control de finanzas personales desde la terminal y/o una app de escritorio nativa. Cuentas (efectivo,
+débito, vales, tarjeta de crédito), buckets de ahorro (fondo de emergencia + metas), presupuestos
+informativos, y un reporte mensual que distingue "cuánto gasté" de "cuánto salió de mi bolsillo".
+
+Tus datos viven en **tu propio proyecto de Supabase** (tiene plan gratuito): el CLI y la GUI leen y escriben
+directo ahí, desde cualquier máquina. No hay ninguna base de datos local que se pueda desincronizar. Para no
+depender solo de Supabase, la app hace **respaldos**: a mano cuando quieras y solos cada 7 días.
 
 Reemplaza un dashboard de Excel que se había vuelto engorroso de mantener. El Excel
-(`Dashboard_Financiero.xlsx`) queda como **referencia histórica de solo consulta** — ya no se importa
-nada de él; una base de datos nueva arranca vacía y se carga con `setup`.
+(`Dashboard_Financiero.xlsx`/`.ods`) queda como **referencia histórica de solo consulta**; no se importa.
 
-## Uso
+## Documentación
 
-```
-money-tracker <comando> [opciones]
-```
+| Documento | Para qué |
+|---|---|
+| Este README | Qué es, conceptos, uso del CLI y la GUI, respaldos y ejemplos |
+| [`docs/INSTALACION.md`](docs/INSTALACION.md) | Instalar, configurar Supabase, actualizar, restaurar y problemas comunes |
+| [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) | Cómo está hecho por dentro, para quien vaya a tocar el código |
+| [`setup/README.md`](setup/README.md) | El esquema de Supabase: aplicarlo, cambiarlo y verificarlo |
+| [`AGENTS.md`](AGENTS.md) | Guía de desarrollo (convenciones y comandos) |
 
-### Compilar e instalar
+¿Primera vez, o vuelves después de un tiempo? Empieza por [`docs/INSTALACION.md`](docs/INSTALACION.md).
 
-```sh
-cargo build --release
-sudo cp target/release/money-tracker /usr/local/bin/
-```
+---
 
-O directamente con cargo: `cargo run -- <comando> [opciones]`
+## Índice
 
-## El modelo
+1. [Conceptos](#1-conceptos)
+2. [CLI — set de instrucciones](#2-cli--set-de-instrucciones)
+3. [Respaldos](#3-respaldos)
+4. [GUI — vistas y funcionalidades](#4-gui--vistas-y-funcionalidades)
+5. [Ejemplos](#5-ejemplos)
 
-Todo movimiento de dinero es una **entrada** entre **cuentas**, o a través del borde del sistema:
+---
 
-| Tipo de entrada | Significado |
+## 1. Conceptos
+
+Todo movimiento de dinero es un **movimiento** (`entry`) entre **cuentas**, o a través del borde del sistema:
+
+| Tipo de movimiento | Significado |
 |---|---|
 | `income` | Entra dinero al sistema (nómina, vales, etc.) |
 | `expense` | Sale dinero del sistema (un gasto) |
 | `transfer` | Se mueve entre dos cuentas — **no es gasto ni ingreso** |
 | `opening` | Saldo inicial cargado con `setup` — no cuenta como ingreso |
 
-Las cuentas tienen un **tipo** (`kind`):
+Tipos de cuenta (`--kind` en `account add`):
 
-- **`spending`** — efectivo, débito, vales. Los vales pueden marcarse `--restricted`: el aporte
-  automático al fondo de emergencia nunca se dispara sobre una cuenta restringida.
-- **`emergency`** — el fondo de emergencia. Solo puede haber uno activo. Recibe un % fijo
-  (`emergency_pct`, default 10%) de cada ingreso que caiga en una cuenta líquida.
-- **`target`** — un bucket de ahorro con meta (Vacaciones, etc). Los que quieras.
-- **`credit`** — una tarjeta de crédito. Su saldo va en negativo = deuda. Pagarla es una
-  transferencia, no un gasto nuevo.
+- **`spending`**: efectivo, débito, vales. Con `--restricted` queda como no líquida: el aporte automático al fondo de
+  emergencia nunca se dispara sobre ella (ej. vales de despensa, que no se pueden mover a ahorro).
+- **`emergency`**: el fondo de emergencia. Solo puede haber **una** activa. Recibe automáticamente un `emergency_pct`%
+  (10% por defecto) de cada `income` que caiga en una cuenta líquida.
+- **`target`**: un bucket de ahorro, con o sin meta (`--target` es opcional, para un bucket abierto tipo "Patrimonio").
+- **`credit`**: una tarjeta de crédito. Su saldo va en negativo = deuda. Pagarla es una `transfer`, nunca un gasto
+  nuevo (evita contarlo dos veces).
 
-Los saldos de cuenta **se derivan** de la suma de entradas, nunca se almacenan — no pueden
-desincronizarse, y arrastran de un mes a otro (por eso `setup` funciona: el saldo cargado sigue ahí
-el mes siguiente).
+Los **saldos no se guardan**: son la suma de los movimientos de cada cuenta, así que nunca se desincronizan y un saldo
+inicial sigue ahí el mes siguiente.
+
+La app **rechaza** lo que rompería el libro: sacar de un bucket más de lo que tiene, pasar el disponible de la tarjeta
+(límite − deuda), una segunda cuenta de emergencia activa, montos de cero o negativos, o un presupuesto que no sea
+positivo. Los presupuestos son **informativos**: nunca bloquean un gasto.
 
 ### Los dos números del reporte
 
-Con tarjeta de crédito o gastos pagados desde un bucket, "cuánto gasté este mes" tiene dos respuestas
-honestas y distintas:
+Como un gasto se puede pagar desde una cuenta de gasto, una tarjeta de crédito o directo de un bucket de ahorro,
+"cuánto gasté este mes" tiene dos respuestas honestas y distintas; el `report` muestra ambas:
 
-- **Gasto del mes (devengado)** — lo que consumiste, sin importar cómo lo pagaste. Contra esto compara
-  el presupuesto.
-- **Salida real de efectivo** — lo que realmente salió de tus cuentas de gasto, incluyendo pagos de
-  tarjeta hechos ese mes (que no financian nada nuevo, solo liquidan un cargo de un mes anterior).
+- **Gasto del mes (devengado)**: todo lo que consumiste este mes, sin importar la fuente. Contra esto compara el
+  presupuesto.
+- **Salida real de efectivo**: lo que realmente salió de tus cuentas de gasto, incluyendo pagos de tarjeta hechos ese
+  mes (que no financian nada nuevo, solo liquidan un cargo de un mes anterior).
 
-### Comandos
+`report --detail` desglosa el devengado en pagado-con-flujo / financiado-con-ahorro / a-crédito.
 
-| Comando | Subcomando | Descripción |
-|---------|-----------|-------------|
-| `add` | — | Registrar un gasto: `add <MONTO> <CONCEPTO> [--from CUENTA]` |
-| `income` | — | Registrar un ingreso: `income <MONTO> <CONCEPTO> [--to CUENTA] [--no-emergency]` |
-| `transfer` | — | Mover dinero entre dos cuentas cualquiera (pago de tarjeta, retiro de cajero, ...) |
+---
+
+## 2. CLI — set de instrucciones
+
+¿Todavía no lo tienes instalado o conectado? [`docs/INSTALACION.md`](docs/INSTALACION.md).
+
+Todos los comandos que registran dinero resuelven uno de tres modos según qué banderas pases
+(`cli/src/commands/helpers.rs::PromptMode`):
+
+- **`Wizard`**: sin argumentos, o con `-i`/`--interactive`: pregunta todo, incluyendo opcionales.
+- **`Fill`**: algunos argumentos: solo pregunta por los campos requeridos que falten.
+- **`Strict`**: con `--yes`: nunca pregunta, falla si falta algo requerido. Es el modo para scripts.
+
+### Referencia de comandos
+
+| Comando | Subcomando | Qué hace |
+|---|---|---|
+| `add` | — | Registrar un gasto |
+| `income` | — | Registrar un ingreso (aparta `emergency_pct`% al fondo de emergencia) |
+| `transfer` | — | Mover dinero entre dos cuentas (pago de tarjeta, retiro de cajero…) |
 | `bucket` | `deposit` | Depositar a un bucket de ahorro |
-| | `withdraw` | Retirar de un bucket (**no es un gasto** — avisa si ya lo gastaste) |
-| `account` | `add` | Crear una cuenta: `--kind <spending\|emergency\|target\|credit>` |
-| | `list` | Listar cuentas con saldo derivado |
-| | `archive` | Archivar una cuenta (rechaza si el saldo no es cero, salvo `--force`) |
-| | `reconcile` | Cuadrar el sobre de efectivo contra lo que realmente tenés |
-| `entry` | `list` | Listar movimientos, filtrable por período/concepto/cuenta/tipo |
+| | `withdraw` | Retirar de un bucket (**no es un gasto**) |
+| `account` | `add` | Crear una cuenta |
+| | `list` | Listar cuentas con su saldo (`--all` incluye archivadas) |
+| | `archive` | Archivar (rechaza si el saldo no es cero, salvo `--force`) |
+| | `reconcile` | Cuadrar el sobre de efectivo contra lo que contaste |
+| `entry` | `list` | Listar movimientos, con filtros |
+| | `edit` | Corregir un movimiento (monto, concepto, cuenta, fecha…) |
 | | `rm` | Borrar un movimiento por id |
 | `concept` | `list` / `add` | Gestionar conceptos |
-| `budget` | `set` / `show` / `rm` | Presupuesto mensual — **solo informativo**, nunca bloquea |
-| `report` | — | Reporte del mes: gasto devengado, salida de efectivo, saldos, presupuesto vs real |
-| `config` | `list` / `get` / `set` | Configuración (`emergency_pct`, `default_account`, `income_account`, `cash_concept`) |
-| `setup` | — | Cargar saldos iniciales en una base de datos nueva |
-| `db` | `status` / `reset` | Inspeccionar o reiniciar el archivo de base de datos |
+| `budget` | `set` / `show` / `rm` | Presupuesto mensual (informativo, nunca bloquea) |
+| `report` | — | Reporte del mes, ver [los dos números](#los-dos-números-del-reporte) |
+| `config` | `list` / `get` / `set` | Reglas del libro contable ([claves](#claves-de-configuración)) |
+| `setup` | — | Cargar saldos iniciales en un libro nuevo |
+| `db` | `backup` | Respaldo del libro contable ([respaldos](#3-respaldos)) |
+| | `remote login` | Conectar con tu proyecto de Supabase |
+| | `remote logout` | Olvidar la sesión (conserva URL y key) |
+| | `remote status` | Conexión, sesión, revisión, versión de esquema y último respaldo |
 
-Todos los comandos que registran dinero aceptan banderas para uso no interactivo, o preguntan por
-dialoguer si faltan datos. `-i/--interactive` fuerza el wizard completo; `--yes` nunca pregunta y
-falla si falta algo requerido.
+Sintaxis (`[...]` es opcional; cualquier comando acepta `--help`):
 
-### Ejemplos
+```
+add <MONTO> <CONCEPTO> [--from CUENTA] [-s SUBCONCEPTO] [-d DESCRIPCION] [-D FECHA] [--new-concept]
+income <MONTO> <CONCEPTO> [--to CUENTA] [-d DESCRIPCION] [-D FECHA] [--no-emergency] [--new-concept]
+transfer -a MONTO --from CUENTA --to CUENTA [-d DESCRIPCION] [-D FECHA]
+bucket deposit  -b BUCKET -a MONTO [--from CUENTA] [-D FECHA]
+bucket withdraw -b BUCKET -a MONTO [--to CUENTA] [-D FECHA]
+account add <NOMBRE> --kind <spending|emergency|target|credit> [--target N] [--limit N] [--restricted]
+account list [--all]
+account archive <NOMBRE> [--force]
+account reconcile <NOMBRE> --actual N [-c CONCEPTO] [-D FECHA]
+entry list [-p PERIODO] [-c CONCEPTO] [--account NOMBRE] [--kind K] [-n LIMITE]
+entry edit <ID> [-a MONTO] [-c CONCEPTO] [-s SUBCONCEPTO] [-d DESCRIPCION] [-D FECHA] [--from CUENTA] [--to CUENTA]
+entry rm <ID>
+concept list
+concept add <NOMBRE> [-t TIPO]
+budget set -c CONCEPTO -l LIMITE [-p PERIODO]
+budget show [-p PERIODO]
+budget rm -c CONCEPTO [-p PERIODO]
+report [-p PERIODO] [--detail]
+config list
+config get <CLAVE>
+config set <CLAVE> <VALOR>
+setup [--account NOMBRE=MONTO ...] [-D FECHA] [--force]
+db backup [-o CARPETA_O_ARCHIVO]
+db remote login [EMAIL] [--url URL] [--key KEY]
+db remote logout
+db remote status
+```
+
+`-D FECHA` es `YYYY-MM-DD` y `-p PERIODO` es `YYYY-MM`. Sin `-p`, `report` usa el mes actual y `entry list` muestra
+todos los movimientos. `add`, `income` y `transfer` también aceptan `-i` (wizard completo) y `--yes` (nunca pregunta).
+
+Después de cada comando exitoso, si el último respaldo tiene más de 7 días, el CLI hace uno solo y lo avisa en una
+línea ([respaldos](#3-respaldos)).
+
+### Claves de configuración
+
+`config set <clave> <valor>` (o **Ajustes** en la GUI). Viven en Supabase, así que son las mismas en todas tus
+máquinas:
+
+| Clave | Uso | Default |
+|---|---|---|
+| `emergency_pct` | % de cada `income` líquido que se aparta al fondo de emergencia | `10` |
+| `default_account` | Cuenta usada por `add --from` si se omite | — |
+| `income_account` | Cuenta usada por `income --to` si se omite | — |
+| `cash_concept` | Concepto usado por `account reconcile` para el sobrante/faltante | — |
+| `baseline_monthly_expense` | Gasto mensual de referencia para "Meses de colchón" mientras no hay meses registrados | — |
+
+---
+
+## 3. Respaldos
+
+Un respaldo es un archivo `.sql` con **todo** tu libro contable (cuentas, incluidas las archivadas, movimientos,
+presupuestos, conceptos y configuración), tomado en un solo instante.
+
+```sh
+money-tracker db backup                    # → ~/.money-tracker/backups/money-tracker-AAAAMMDD-HHMMSS.sql
+money-tracker db backup -o ~/Dropbox/mt/   # otra carpeta (o un archivo nuevo)
+```
+
+O **Ajustes → Respaldo → Respaldar ahora** en la GUI. Nunca sobrescribe un archivo existente y se crea legible solo
+por ti (`0600`). Guárdalo también fuera de la laptop (Dropbox, iCloud, un USB): el respaldo protege contra perder el
+proyecto de Supabase, no contra perder la laptop.
+
+**Automático**: si el último respaldo tiene más de 7 días, se hace uno solo al terminar un comando del CLI o al abrir
+la GUI. Si falla (sin internet, por ejemplo) solo avisa, y lo reintenta la próxima vez. `db remote status` y
+**Ajustes** muestran la fecha del último.
+
+**Restaurar** (si pierdes tu proyecto de Supabase): proyecto nuevo, archivos de esquema y el respaldo pegado en el SQL
+Editor. Pasos: [`docs/INSTALACION.md`, sección 8](docs/INSTALACION.md#8-restaurar-un-respaldo).
+
+---
+
+## 4. GUI — vistas y funcionalidades
+
+La GUI (Tauri v2 + React) hace lo mismo que el CLI, sobre los mismos datos. Cómo abrirla o instalarla:
+[`docs/INSTALACION.md`, sección 6](docs/INSTALACION.md#6-gui).
+
+![Dashboard de money-tracker](docs/screenshot-dashboard.png)
+
+Cada pestaña de la barra superior es una vista:
+
+| Vista | Qué muestra / permite | Equivalente en CLI |
+|---|---|---|
+| **Dashboard** | Reporte del mes, gastos por concepto, saldos, patrimonio neto | `report` |
+| **Registrar** | Gasto, ingreso (con aviso de cuánto va al fondo) y transferencia | `add`, `income`, `transfer` |
+| **Cuentas** | Crear y listar cuentas, depositar/retirar de buckets, cuadrar efectivo | `account *`, `bucket *` |
+| **Movimientos** | Listar con filtros, editar o borrar un movimiento | `entry list/edit/rm` |
+| **Presupuestos** | Crear/ver presupuestos, con donut de % consumido | `budget *` |
+| **Ajustes** | Reglas del libro, conceptos, conexión (sesión, revisión, esquema) y respaldo | `config *`, `concept *`, `db *` |
+
+Y dos pantallas que reemplazan a las pestañas cuando hace falta:
+
+| Pantalla | Cuándo aparece | Equivalente en CLI |
+|---|---|---|
+| **Conexión** | Sin Supabase configurado, sin sesión (o si expira con la app abierta), o con otro esquema | `db remote login` |
+| **SetupWizard** | Conectado, pero todavía sin ninguna cuenta: crear cuentas y saldos iniciales | `account add` + `setup` |
+
+La GUI se actualiza sola: cada ~30 s revisa si hubo cambios en Supabase (por ejemplo, algo que registraste desde el
+CLI o desde otra máquina, incluidos los borrados) y recarga solo si los hubo. También recarga al volver a la ventana y
+con el botón **Actualizar**. Al abrir, si el último respaldo tiene más de 7 días, hace uno sola y lo avisa arriba.
+
+---
+
+## 5. Ejemplos
 
 ```sh
 # Crear las cuentas (una sola vez)
@@ -135,20 +276,19 @@ money-tracker report -p 2026-08 --detail
 money-tracker account list
 ```
 
-### Escenarios de uso
+### Escenario completo de un mes
 
-Flujo típico de un mes, en las propias palabras con las que se pensó:
+Flujo típico, en las propias palabras con las que se pensó el diseño:
 
 > 1. yo recibo mi ingreso, se separa su porcentaje al fondo de emergencia
 > 2. si tengo algún bucket, le destino parte de mi ingreso a discreción
 > 3. voy a ir al cajero a hacer un retiro de efectivo para mi sobre
 > 4. uso la tarjeta de débito y/o la de vales para los gastos
-> 5. por lo general, los gastos en efectivo serán discrecionales, pero puede que no siempre, lo más
->    seguro pueda ser que en el establecimiento de la gasolina u otro lugar no acepten tarjeta o
->    salió alguna reparación imprevista ej se ponchó una llanta
-> 6. si la junté lana para lo que tenía destinado cierto bucket, hago un retiro del bucket y lo
->    gasto (ej juntaba para unos tenis y voy y los compro; juntaba para la reparación del carro y
->    voy y retiro en efectivo para realizar el pago)
+> 5. por lo general, los gastos en efectivo serán discrecionales, pero puede que no siempre — quizá en
+>    la gasolinera no acepten tarjeta, o salió alguna reparación imprevista (ej. se ponchó una llanta)
+> 6. si la junté lana para lo que tenía destinado cierto bucket, hago un retiro del bucket y lo gasto
+>    (juntaba para unos tenis y voy y los compro; juntaba para la reparación del carro y retiro en
+>    efectivo para pagar)
 > 7. si surge una emergencia aplico el punto anterior pero para el fondo de emergencia
 > 8. de mi remanente hago una "aportación voluntaria" a mi fondo de emergencia para "reponerlo"
 
@@ -187,15 +327,15 @@ money-tracker add 250 Alimentos --from vales
 
 **5. Gasto en efectivo que sí puedes identificar (no siempre es discrecional)**
 
-Si sabes en el momento que fue gasolina o una reparación, regístralo con su concepto real — no
-esperes al cuadre de fin de mes:
+Si sabes en el momento que fue gasolina o una reparación, regístralo con su concepto real — no esperes
+al cuadre de fin de mes:
 
 ```sh
 money-tracker add 450 Extraordinario --from efectivo -d "llanta ponchada"
 ```
 
-Solo lo que de verdad no puedas rastrear cae en `account reconcile efectivo --actual N` al cierre
-del mes, y ese sobrante cae por default en `Discrecional` (tu `cash_concept`).
+Solo lo que de verdad no puedas rastrear cae en `account reconcile efectivo --actual N` al cierre del
+mes, y ese sobrante cae por default en `Discrecional` (tu `cash_concept`).
 
 **6. Bucket completo → retiro y gasto**
 
@@ -225,8 +365,8 @@ money-tracker add 3000 Extraordinario --from debito -d "gasto médico imprevisto
 money-tracker bucket deposit -b "Fondo de emergencia" -a 1500 --from debito
 ```
 
-Es un depósito manual, no pasa por `income` — no vuelve a dispararse ningún % automático sobre
-dinero que ya era tuyo.
+Es un depósito manual, no pasa por `income` — no vuelve a dispararse ningún % automático sobre dinero
+que ya era tuyo.
 
 ### Salida del reporte
 
@@ -246,13 +386,12 @@ dinero que ya era tuyo.
             Aportes a ahorro: $2400.00
 
 Gastos por concepto:
-+--------------+----------+---------+------+----+
-| Concepto     | Gastado  | Presup. | %    | #  |
-+--------------+----------+---------+------+----+
-| Discrecional | $1800.00 | —       | —    | 1  |
-+--------------+----------+---------+------+----+
-| Alimentos    | $350.00  | $2500   | 14%  | 1  |
-+--------------+----------+---------+------+----+
+╭──────────────┬──────────┬──────────┬─────┬───╮
+│ Concepto     │  Gastado │  Presup. │   % │ # │
+├──────────────┼──────────┼──────────┼─────┼───┤
+│ Discrecional │ $1800.00 │        — │   — │ 1 │
+│ Alimentos    │  $350.00 │ $2500.00 │ 14% │ 1 │
+╰──────────────┴──────────┴──────────┴─────┴───╯
 
 Cuentas:
   Fondo de emergencia       $37400.00
@@ -265,88 +404,4 @@ Cuentas:
               Ahorro: $39400.00
     Deuda de tarjeta: $1800.00
      Patrimonio neto: $53000.00
-```
-
-## Estructura del proyecto
-
-```
-Cargo.toml          # workspace root (money_core + cli)
-money_core/         # libreria: modelos, servicios, SQLite — sin dependencias de UI
-  src/
-    db.rs           # esquema, migraciones, PRAGMA user_version, detección de esquema legacy
-    period.rs       # Period ("YYYY-MM") y utilidades de fecha
-    models/         # AccountKind/NewAccount/AccountBalance, EntryKind/NewEntry/Entry, Budget, Concept, Config
-    services/       # account_service, entry_service, report_service, setup_service
-  tests/scenarios.rs  # tests de integración vía la API pública
-cli/                # binario: clap + dialoguer
-  src/
-    main.rs
-    commands/       # add, income, transfer, bucket, account, entry, concept, budget, report, config, setup, db
-Dashboard_Financiero.xlsx / .ods  # dashboard legado, solo consulta — ya no se importa
-```
-
-## Base de datos
-
-- **Ubicación**: `~/.money-tracker/data.db` (o `MONEY_TRACKER_DB` para apuntar a otra ruta, útil para
-  pruebas)
-- Se crea automáticamente al ejecutar cualquier comando
-- Una base de datos con el esquema anterior (`transactions`/`buckets`) se rechaza con un mensaje
-  accionable — no hay migración automática. Ver `money-tracker db status` y `db reset --backup`.
-
-### Backup
-
-`db reset` no hace un backup "en paralelo" — mueve el archivo actual a un lado y el próximo comando
-crea uno nuevo vacío. Para respaldar sin perder la base activa, copia el archivo mientras no haya un
-comando escribiendo en él:
-
-```sh
-cp ~/.money-tracker/data.db ~/.money-tracker/data.db.bak-$(date +%Y%m%d)
-```
-
-### Borrar / reiniciar la base de datos
-
-```sh
-# Ver ruta, versión de esquema, cuentas y movimientos
-money-tracker db status
-
-# Mover la base actual a un lado (data.db.backup-YYYYMMDDHHMMSS) y empezar limpio
-# pide confirmación salvo que pases --yes
-money-tracker db reset
-
-# Lo mismo, sin preguntar
-money-tracker db reset --yes
-
-# Borrar la base actual sin dejar respaldo (irreversible)
-money-tracker db reset --backup=false --yes
-```
-
-## Arquitectura
-
-Workspace con dos crates:
-
-- **`money_core`** — el modelo: SQLite (rusqlite), cuentas, entradas, presupuestos, reportes. No
-  imprime, no pregunta, no parsea argumentos — un consumidor (CLI, GUI) lo envuelve.
-- **`cli`** — binario con comandos clap + prompts interactivos dialoguer. Un manejador delgado sobre
-  `money_core`.
-
-## GUI
-
-Segundo manejador sobre el mismo `money_core`, con paridad completa de operaciones (dashboard,
-registrar gasto/ingreso/transferencia, cuentas y buckets, cuadre de efectivo, presupuestos,
-movimientos, ajustes, y el wizard de arranque si la base está vacía).
-
-![Dashboard de money-tracker](docs/screenshot-dashboard.png)
-
-```sh
-cd gui
-pnpm install
-pnpm tauri dev       # ventana nativa, contra ~/.money-tracker/data.db
-```
-
-CLI y GUI pueden correr al mismo tiempo contra el mismo archivo — la conexión abre en modo WAL.
-Los tipos compartidos (`AccountBalance`, `Entry`, `MonthlyReport`, etc.) se generan desde
-`money_core` con `ts-rs`:
-
-```sh
-cargo test -p money_core --features ts-rs   # regenera gui/src/bindings/*.ts
 ```

@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod accounts;
 pub mod budgets;
 pub mod buckets;
@@ -6,3 +7,4 @@ pub mod config;
 pub mod entries;
 pub mod report;
 pub mod setup;
+pub mod sync;

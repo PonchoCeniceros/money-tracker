@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result};
-use crate::period::validate_date;
+use crate::period::{validate_date, Period};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
@@ -177,6 +177,37 @@ impl Entry {
         }
         delta
     }
+}
+
+/// List filter understood by every backend. `period` is the half-open
+/// month range; `up_to_date` (inclusive) covers "balance as of" reads.
+#[derive(Debug, Clone, Default)]
+pub struct EntryFilter {
+    pub period: Option<Period>,
+    pub kind: Option<EntryKind>,
+    pub concept: Option<String>,
+    pub account_id: Option<i64>,
+    pub limit: Option<u32>,
+    /// Dates <= this (inclusive). Mutually exclusive with `period` in
+    /// practice; used by `balance_as_of`/`net_worth(as_of)`.
+    pub up_to_date: Option<String>,
+}
+
+/// Patch for [`entry_service::update`]. Every field is "leave unchanged"
+/// when `None` — there is deliberately no way to clear an existing
+/// `subconcept` or `description` back to NULL through this path (a fresh
+/// `add`/`rm` pair remains the way to do that), which keeps this an
+/// unambiguous patch rather than needing a separate "clear" signal per
+/// optional field.
+#[derive(Debug, Clone, Default)]
+pub struct EntryUpdate {
+    pub date: Option<String>,
+    pub amount: Option<f64>,
+    pub concept: Option<String>,
+    pub subconcept: Option<String>,
+    pub description: Option<String>,
+    pub from_account_id: Option<i64>,
+    pub to_account_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

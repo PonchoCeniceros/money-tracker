@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { accountsApi } from "../api/accounts";
 import { conceptsApi } from "../api/concepts";
 import { entriesApi } from "../api/entries";
+import type { SplitPreview } from "../bindings/SplitPreview";
 import { useApi, bumpRevision } from "../hooks/useApi";
 import { Field } from "../components/Field";
+import { Money } from "../components/Money";
 import { ErrorBanner } from "../components/ErrorBanner";
 import ui from "../components/ui.module.css";
 
@@ -203,6 +205,24 @@ function IncomeForm({ accounts }: { accounts: AccountOption[] }) {
   const targetAccount = accountId === "" ? accounts[0]?.id : accountId;
   const targetAccountObj = accounts.find((a) => a.id === targetAccount);
 
+  // The domain decides whether (and how much) goes to the emergency fund.
+  const [preview, setPreview] = useState<SplitPreview | null>(null);
+  useEffect(() => {
+    const value = Number(amount);
+    if (!targetAccount || !(value > 0)) {
+      setPreview(null);
+      return;
+    }
+    let cancelled = false;
+    entriesApi
+      .splitPreview(targetAccount, value)
+      .then((p) => !cancelled && setPreview(p))
+      .catch(() => !cancelled && setPreview(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [targetAccount, amount]);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -306,10 +326,15 @@ function IncomeForm({ accounts }: { accounts: AccountOption[] }) {
         />
         Aportar % al fondo de emergencia
       </label>
-      {targetAccountObj && !targetAccountObj.liquid && splitEmergency && (
+      {splitEmergency && preview && (
         <div className={ui.notice}>
-          '{targetAccountObj.name}' es una cuenta restringida — el aporte no se aplicará aunque
-          esta casilla esté marcada.
+          Se apartarán <Money amount={preview.amount} /> ({preview.pct}%) a '{preview.fund}'.
+        </div>
+      )}
+      {splitEmergency && !preview && targetAccountObj && Number(amount) > 0 && (
+        <div className={ui.notice}>
+          Este ingreso no genera aporte al fondo de emergencia
+          {targetAccountObj.liquid ? " (no hay un fondo activo)." : ` ('${targetAccountObj.name}' es una cuenta restringida).`}
         </div>
       )}
       <div style={{ marginTop: 12 }}>

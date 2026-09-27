@@ -1,6 +1,5 @@
 use clap::Args;
 use dialoguer::Input;
-use money_core::db::open_db;
 use money_core::services::entry_service;
 use money_core::Result;
 
@@ -25,7 +24,7 @@ pub struct TransferArgs {
 }
 
 pub fn run(args: TransferArgs) -> Result<()> {
-    let conn = open_db()?;
+    let be = helpers::backend()?;
     let any_given = args.amount.is_some() || args.from.is_some() || args.to.is_some();
     let mode = PromptMode::resolve(args.interactive, args.yes, any_given);
 
@@ -50,7 +49,7 @@ pub fn run(args: TransferArgs) -> Result<()> {
     let from_name = match args.from {
         Some(f) => f,
         None if mode.allows_prompt() => {
-            let names = helpers::get_account_names(&conn)?;
+            let names = helpers::get_account_names(&*be)?;
             let selection = helpers::map_dlg_err(
                 dialoguer::FuzzySelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
                     .with_prompt("From account")
@@ -65,12 +64,12 @@ pub fn run(args: TransferArgs) -> Result<()> {
             return Ok(());
         }
     };
-    let from = helpers::resolve_account(&conn, &from_name)?;
+    let from = helpers::resolve_account(&*be, &from_name)?;
 
     let to_name = match args.to {
         Some(t) => t,
         None if mode.allows_prompt() => {
-            let names = helpers::get_account_names(&conn)?;
+            let names = helpers::get_account_names(&*be)?;
             let selection = helpers::map_dlg_err(
                 dialoguer::FuzzySelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
                     .with_prompt("To account")
@@ -85,7 +84,7 @@ pub fn run(args: TransferArgs) -> Result<()> {
             return Ok(());
         }
     };
-    let to = helpers::resolve_account(&conn, &to_name)?;
+    let to = helpers::resolve_account(&*be, &to_name)?;
 
     let description = match args.description {
         Some(d) => Some(d),
@@ -107,7 +106,7 @@ pub fn run(args: TransferArgs) -> Result<()> {
 
     let date = helpers::parse_date(args.date.as_deref())?;
 
-    entry_service::add_transfer(&conn, &date, amount, from.id, to.id, description.as_deref())?;
+    entry_service::add_transfer(&*be, &date, amount, from.id, to.id, description.as_deref())?;
 
     println!(
         "✓ ${amount:.2} movido de '{}' a '{}' ({date})",

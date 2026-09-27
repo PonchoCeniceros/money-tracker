@@ -163,6 +163,15 @@ function SeedStep({
       onDone();
       return;
     }
+
+    // The ledger already has movements? Never silently seed opening balances over it.
+    if (await setupApi.isSeeded()) {
+      const ok = window.confirm(
+        "El libro ya tiene movimientos registrados. ¿Agregar los saldos iniciales de todas formas?"
+      );
+      if (!ok) return;
+    }
+
     setBusy(true);
     try {
       await setupApi.seed(pairs, date);

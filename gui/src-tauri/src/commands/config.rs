@@ -1,34 +1,27 @@
-use rusqlite::OptionalExtension;
 use tauri::State;
 
-use money_core::AppError;
+
 
 use crate::error::ApiResult;
 use crate::state::AppState;
 
 #[tauri::command]
-pub fn get_config(state: State<AppState>, key: String) -> ApiResult<Option<String>> {
-    let conn = state.conn.lock().unwrap();
-    let value = conn
-        .query_row(
-            "SELECT value FROM config WHERE key = ?1",
-            rusqlite::params![key],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(AppError::from)?;
-    Ok(value)
+pub async fn get_config(state: State<'_, AppState>, key: String) -> ApiResult<Option<String>> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        Ok(be.get_config(&key)?)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn set_config(state: State<AppState>, key: String, value: String) -> ApiResult<()> {
-    let conn = state.conn.lock().unwrap();
-    conn.execute(
-        "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
-        rusqlite::params![key, value],
-    )
-    .map_err(AppError::from)?;
-    Ok(())
+pub async fn set_config(state: State<'_, AppState>, key: String, value: String) -> ApiResult<()> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        be.set_config(&key, &value)?;
+        Ok(())
+    })
+    .await
 }
 
 #[derive(serde::Serialize)]
@@ -38,22 +31,17 @@ pub struct ConfigEntry {
 }
 
 #[tauri::command]
-pub fn list_config(state: State<AppState>) -> ApiResult<Vec<ConfigEntry>> {
-    let conn = state.conn.lock().unwrap();
-    let mut stmt = conn
-        .prepare("SELECT key, value FROM config ORDER BY key")
-        .map_err(AppError::from)?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(ConfigEntry {
-                key: row.get(0)?,
-                value: row.get(1)?,
+pub async fn list_config(state: State<'_, AppState>) -> ApiResult<Vec<ConfigEntry>> {
+    let be = state.backend().await?;
+    crate::state::blocking(move || {
+        Ok(be
+            .list_config()?
+            .into_iter()
+            .map(|c| ConfigEntry {
+                key: c.key,
+                value: c.value,
             })
-        })
-        .map_err(AppError::from)?;
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row.map_err(AppError::from)?);
-    }
-    Ok(result)
+            .collect())
+    })
+    .await
 }

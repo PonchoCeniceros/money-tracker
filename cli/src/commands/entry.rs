@@ -1,6 +1,5 @@
 use clap::{Args, Subcommand};
 use dialoguer::Confirm;
-use money_core::db::open_db;
 use money_core::models::{Entry, EntryKind};
 use money_core::period::Period;
 use money_core::services::entry_service::{self, EntryFilter, EntryUpdate};
@@ -77,7 +76,7 @@ pub fn run(args: EntryArgs) -> Result<()> {
 }
 
 fn list(args: ListArgs) -> Result<()> {
-    let conn = open_db()?;
+    let be = helpers::backend()?;
 
     let period = match args.period {
         Some(p) => Some(Period::parse(&p)?),
@@ -88,7 +87,7 @@ fn list(args: ListArgs) -> Result<()> {
         None => None,
     };
     let account_id = match args.account {
-        Some(name) => Some(helpers::resolve_account(&conn, &name)?.id),
+        Some(name) => Some(helpers::resolve_account(&*be, &name)?.id),
         None => None,
     };
 
@@ -98,9 +97,10 @@ fn list(args: ListArgs) -> Result<()> {
         concept: args.concept,
         account_id,
         limit: args.limit,
+        ..Default::default()
     };
 
-    let entries = entry_service::list(&conn, &filter)?;
+    let entries = entry_service::list(&*be, &filter)?;
     if entries.is_empty() {
         println!("No hay movimientos.");
         return Ok(());
@@ -131,8 +131,8 @@ fn format_row(e: &Entry) -> String {
 }
 
 fn edit(args: EditArgs) -> Result<()> {
-    let conn = open_db()?;
-    let current = entry_service::get(&conn, args.id)?;
+    let be = helpers::backend()?;
+    let current = entry_service::get(&*be, args.id)?;
 
     let date = match &args.date {
         Some(d) => Some(helpers::parse_date(Some(d))?),
@@ -144,16 +144,16 @@ fn edit(args: EditArgs) -> Result<()> {
                 EntryKind::Income => "income",
                 _ => "expense",
             };
-            Some(helpers::resolve_concept(&conn, c, type_filter)?)
+            Some(helpers::resolve_concept(&*be, c, type_filter)?)
         }
         None => None,
     };
     let from_account_id = match &args.from {
-        Some(name) => Some(helpers::resolve_account(&conn, name)?.id),
+        Some(name) => Some(helpers::resolve_account(&*be, name)?.id),
         None => None,
     };
     let to_account_id = match &args.to {
-        Some(name) => Some(helpers::resolve_account(&conn, name)?.id),
+        Some(name) => Some(helpers::resolve_account(&*be, name)?.id),
         None => None,
     };
 
@@ -195,13 +195,13 @@ fn edit(args: EditArgs) -> Result<()> {
         from_account_id,
         to_account_id,
     };
-    let updated = entry_service::update(&conn, args.id, &upd)?;
+    let updated = entry_service::update(&*be, args.id, &upd)?;
     println!("✓ Entrada actualizada: {}", format_row(&updated));
     Ok(())
 }
 
 fn rm(args: RmArgs) -> Result<()> {
-    let conn = open_db()?;
+    let be = helpers::backend()?;
     if !args.yes {
         let confirmed = helpers::map_dlg_err(
             Confirm::new()
@@ -214,7 +214,7 @@ fn rm(args: RmArgs) -> Result<()> {
             return Ok(());
         }
     }
-    entry_service::delete(&conn, args.id)?;
+    entry_service::delete(&*be, args.id)?;
     println!("✓ Entrada #{} borrada", args.id);
     Ok(())
 }

@@ -4,14 +4,22 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rusqlite = { version = "0.31", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+url = "2"
+keyring = { version = "3", features = ["apple-native", "sync-secret-service", "windows-native"] }
 ts-rs = { version = "12", optional = true }
 
 [features]
 # Off by default — only the GUI's binding-generation step needs it.
 # `cargo test --features ts-rs -p money_core` regenerates gui/src/bindings/*.ts.
 ts-rs = ["dep:ts-rs"]
+# Exposes storage::memory::MemoryBackend to integration tests (tests/scenarios.rs).
+test-support = []
+
+[dev-dependencies]
+money_core = { path = ".", features = ["test-support"] }
