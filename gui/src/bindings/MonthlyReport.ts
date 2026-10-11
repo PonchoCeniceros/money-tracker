@@ -20,9 +20,18 @@ from_savings: number,
  */
 on_credit: number, 
 /**
- * Transfers spending -> emergency/target this month (deposits).
+ * Transfers spending -> emergency/target this month (deposits). A
+ * transfer between two savings accounts is not a contribution.
  */
 savings_contributions: number, 
+/**
+ * The `emergency` half of `savings_contributions` (the automatic cut).
+ */
+emergency_contributions: number, 
+/**
+ * The `target` half of `savings_contributions` (goal buckets).
+ */
+target_contributions: number, 
 /**
  * Transfers emergency/target -> spending this month (withdrawals to
  * cash — NOT expenses; see the bucket-withdraw vs. direct-spend note).

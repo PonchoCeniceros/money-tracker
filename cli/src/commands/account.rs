@@ -252,7 +252,15 @@ fn reconcile(args: ReconcileArgs) -> Result<()> {
         Some(c) => c,
         None => default_concept,
     };
-    let concept = helpers::resolve_concept(&*be, &concept, "expense")?;
+    // The adjusting entry's direction decides which concepts are valid: a
+    // balance above the derived one is booked as income (money the ledger
+    // never saw), below it as an expense. Mirrors reconcile_account.
+    let needed_type = if account.balance - actual > 0.0 {
+        "expense"
+    } else {
+        "income"
+    };
+    let concept = helpers::resolve_concept(&*be, &concept, needed_type)?;
 
     let date = helpers::parse_date(args.date.as_deref())?;
 

@@ -35,8 +35,13 @@ pub struct MonthlyReport {
     pub from_savings: f64,
     /// Expense charged to a credit account. Detail-only.
     pub on_credit: f64,
-    /// Transfers spending -> emergency/target this month (deposits).
+    /// Transfers spending -> emergency/target this month (deposits). A
+    /// transfer between two savings accounts is not a contribution.
     pub savings_contributions: f64,
+    /// The `emergency` half of `savings_contributions` (the automatic cut).
+    pub emergency_contributions: f64,
+    /// The `target` half of `savings_contributions` (goal buckets).
+    pub target_contributions: f64,
     /// Transfers emergency/target -> spending this month (withdrawals to
     /// cash — NOT expenses; see the bucket-withdraw vs. direct-spend note).
     pub savings_withdrawals: f64,
@@ -141,6 +146,35 @@ mod tests {
         assert_eq!(report.total_expense, 4200.0);
         assert_eq!(report.from_savings, 4200.0);
         assert_eq!(report.cash_out, 0.0);
+    }
+
+    #[test]
+    fn savings_to_savings_transfer_is_not_a_contribution() {
+        let be = setup();
+        let debito = account_service::create_account(&be, &NewAccount::spending("debito")).unwrap();
+        let fondo = account_service::create_account(&be, &NewAccount::emergency("fondo")).unwrap();
+        let meta = account_service::create_account(
+            &be,
+            &NewAccount::target("Patrimonio", None).unwrap(),
+        )
+        .unwrap();
+        entry_service::add_opening(&be, "2026-08-31", 40000.0, fondo).unwrap();
+        entry_service::add_income(&be, "2026-09-01", 10000.0, debito, "Nomina", None).unwrap();
+        // Two real contributions out of spending...
+        entry_service::add_transfer(&be, "2026-09-02", 900.0, debito, fondo, None).unwrap();
+        entry_service::add_transfer(&be, "2026-09-03", 2000.0, debito, meta, None).unwrap();
+        // ...and a sweep between savings accounts, which is not new money.
+        entry_service::add_transfer(&be, "2026-09-04", 3000.0, fondo, meta, None).unwrap();
+
+        let report = monthly_report(&be, &Period::parse("2026-09").unwrap()).unwrap();
+        assert_eq!(report.emergency_contributions, 900.0);
+        assert_eq!(report.target_contributions, 2000.0);
+        assert_eq!(report.savings_contributions, 2900.0);
+        assert_eq!(
+            report.emergency_contributions + report.target_contributions,
+            report.savings_contributions,
+            "the split must add up to the total the GUI used to re-derive"
+        );
     }
 
     #[test]

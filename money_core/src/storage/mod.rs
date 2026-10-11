@@ -49,7 +49,12 @@ pub fn connect(settings: &crate::settings::Settings) -> Result<Box<dyn LedgerBac
 /// derived (mirrors Postgres `round(n, 2)`).
 /// f64 is fine at personal-finance scale; values stay well below 2^53.
 pub fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
+    // The trailing `+ 0.0` normalizes negative zero. It matters because
+    // `Iterator::sum` for floats folds from `-0.0` (the IEEE 754 additive
+    // identity), so every empty sum here arrives as `-0.0` and would print
+    // as "-0.00". Adding `+0.0` turns `-0.0` into `0.0` and is a no-op for
+    // every other value.
+    (v * 100.0).round() / 100.0 + 0.0
 }
 
 pub trait LedgerBackend: Send + Sync {
@@ -198,6 +203,19 @@ pub trait LedgerBackend: Send + Sync {
 mod tests {
     use super::*;
     use crate::settings::Settings;
+
+    #[test]
+    fn round2_normalizes_negative_zero() {
+        // `Iterator::sum` folds floats from -0.0, so an empty sum lands here
+        // as negative zero and used to render as "-0.00" in the report.
+        let empty: f64 = Vec::<f64>::new().into_iter().sum();
+        assert!(empty.is_sign_negative(), "precondition: empty sum is -0.0");
+        assert!(!round2(empty).is_sign_negative());
+        assert_eq!(format!("{:.2}", round2(empty)), "0.00");
+        // Everything else is untouched.
+        assert_eq!(round2(1234.567), 1234.57);
+        assert_eq!(round2(-12.344), -12.34);
+    }
 
     #[test]
     fn connect_without_url_or_key_is_not_configured_and_offline() {

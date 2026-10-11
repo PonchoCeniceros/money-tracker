@@ -132,6 +132,24 @@ pub fn resolve_concept(be: &dyn LedgerBackend, given: &str, type_filter: &str) -
     match prefix_matches.len() {
         1 => Ok(prefix_matches[0].clone()),
         0 => {
+            // It may exist but be the wrong type for this operation. Saying
+            // "no existe" there sends the user to `concept add`, which then
+            // fails on the unique index — so name the real reason instead.
+            if let Some(found) = be
+                .list_concepts(None)?
+                .into_iter()
+                .map(|c: Concept| c.name)
+                .find(|c| c.to_lowercase() == needle)
+            {
+                let wanted = match type_filter {
+                    "income" => "ingreso",
+                    _ => "gasto",
+                };
+                return Err(AppError::Invalid(format!(
+                    "El concepto '{found}' existe, pero no es de tipo {wanted}. \
+                     Usa uno de tipo {wanted} (o 'both'), o cambia su tipo."
+                )));
+            }
             let suggestion = candidates
                 .iter()
                 .min_by_key(|c| strsim_distance(&c.to_lowercase(), &needle));
@@ -208,4 +226,59 @@ pub fn parse_date(input: Option<&str>) -> Result<String> {
 
     period::validate_date(s)?;
     Ok(s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use money_core::storage::memory::MemoryBackend;
+
+    fn backend_with(concepts: &[(&str, &str)]) -> MemoryBackend {
+        let be = MemoryBackend::new();
+        for (name, ctype) in concepts {
+            be.add_concept(name, ctype).unwrap();
+        }
+        be
+    }
+
+    #[test]
+    fn both_typed_concept_resolves_for_either_direction() {
+        let be = backend_with(&[("Ajuste", "both")]);
+        assert_eq!(resolve_concept(&be, "Ajuste", "expense").unwrap(), "Ajuste");
+        assert_eq!(resolve_concept(&be, "Ajuste", "income").unwrap(), "Ajuste");
+    }
+
+    #[test]
+    fn income_concept_resolves_for_income_and_is_rejected_for_expense() {
+        let be = backend_with(&[("Rendimientos", "income")]);
+        assert_eq!(
+            resolve_concept(&be, "Rendimientos", "income").unwrap(),
+            "Rendimientos"
+        );
+        // Used to fail with NotFound("no existe"), which sent the user to
+        // `concept add` and then blew up on the unique index.
+        let err = resolve_concept(&be, "Rendimientos", "expense").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("existe, pero no es de tipo gasto"), "{msg}");
+        assert!(!msg.contains("no existe"), "{msg}");
+    }
+
+    #[test]
+    fn expense_concept_is_rejected_for_income_with_a_type_message() {
+        let be = backend_with(&[("Alimentos", "expense")]);
+        let err = resolve_concept(&be, "Alimentos", "income").unwrap_err();
+        assert!(
+            err.to_string().contains("existe, pero no es de tipo ingreso"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_truly_missing_concept_still_suggests_the_closest_one() {
+        let be = backend_with(&[("Rendimientos", "income")]);
+        let err = resolve_concept(&be, "Rendimentos", "income").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no existe"), "{msg}");
+        assert!(msg.contains("¿Quisiste decir 'Rendimientos'?"), "{msg}");
+    }
 }

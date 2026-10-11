@@ -2,8 +2,6 @@ import { useState } from "react";
 import { budgetsApi } from "../api/budgets";
 import { conceptsApi } from "../api/concepts";
 import { reportApi } from "../api/report";
-import { accountsApi } from "../api/accounts";
-import { entriesApi } from "../api/entries";
 import { useApi, bumpRevision } from "../hooks/useApi";
 import { Field } from "../components/Field";
 import { ErrorBanner } from "../components/ErrorBanner";
@@ -34,20 +32,13 @@ export default function Budgets() {
   const budgets = useApi(() => budgetsApi.list(period));
   const concepts = useApi(() => conceptsApi.list("expense"));
   const report = useApi(() => reportApi.monthly(period));
-  const accounts = useApi(() => accountsApi.list());
-  const transfers = useApi(() => entriesApi.list({ period, kind: "transfer" }));
 
-  // savings_contributions lumps every spending->emergency/target transfer
-  // together; split it back out by destination account kind so the
-  // automatic emergency-fund split (config.emergency_pct) shows up as its
-  // own slice instead of hiding inside one generic "Ahorro" bucket.
-  const accountKindByName = new Map((accounts.data ?? []).map((a) => [a.name, a.kind]));
-  const emergencyContribution = (transfers.data ?? [])
-    .filter((e) => e.to_account && accountKindByName.get(e.to_account) === "emergency")
-    .reduce((sum, e) => sum + e.amount, 0);
-  const targetContribution = (transfers.data ?? [])
-    .filter((e) => e.to_account && accountKindByName.get(e.to_account) === "target")
-    .reduce((sum, e) => sum + e.amount, 0);
+  // The report already splits contributions by destination kind, and it is
+  // the only place that knows a savings->savings transfer is not a new
+  // contribution. Re-deriving it here from the raw transfer list is what
+  // used to double-count an emergency -> target move.
+  const emergencyContribution = report.data?.emergency_contributions ?? 0;
+  const targetContribution = report.data?.target_contributions ?? 0;
 
   const [concept, setConcept] = useState("");
   const [limit, setLimit] = useState("");
@@ -95,7 +86,7 @@ export default function Budgets() {
       </div>
       <p className={ui.muted}>Informativo únicamente — nunca bloquea un gasto.</p>
 
-      <ErrorBanner message={report.error ?? accounts.error ?? transfers.error} />
+      <ErrorBanner message={report.error} />
       {report.data && (
         <div className={ui.row} style={{ alignItems: "stretch", marginBottom: 16 }}>
           <DonutChart

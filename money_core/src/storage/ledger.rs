@@ -127,19 +127,29 @@ pub fn monthly_report(
         .map(|e| e.amount)
         .sum();
 
-    let savings_contributions: f64 = transfers
-        .iter()
-        .filter(|e| {
-            matches!(
-                (
-                    e.from_account_id.and_then(|id| kinds.get(&id)),
-                    e.to_account_id.and_then(|id| kinds.get(&id)),
-                ),
-                (Some(from), Some(to)) if *from == "spending" && (to == "emergency" || to == "target")
-            )
-        })
-        .map(|e| e.amount)
-        .sum();
+    // A contribution is new money reaching savings, so the source has to be a
+    // spending account: an emergency -> target transfer just moves what was
+    // already saved and must not count twice. Split by destination kind so
+    // callers can show the automatic emergency-fund cut separately without
+    // re-deriving the rule.
+    let contribution_to = |kind: &str| -> f64 {
+        transfers
+            .iter()
+            .filter(|e| {
+                matches!(
+                    (
+                        e.from_account_id.and_then(|id| kinds.get(&id)),
+                        e.to_account_id.and_then(|id| kinds.get(&id)),
+                    ),
+                    (Some(from), Some(to)) if *from == "spending" && to == kind
+                )
+            })
+            .map(|e| e.amount)
+            .sum()
+    };
+    let emergency_contributions = contribution_to("emergency");
+    let target_contributions = contribution_to("target");
+    let savings_contributions = emergency_contributions + target_contributions;
 
     let savings_withdrawals: f64 = transfers
         .iter()
@@ -209,6 +219,8 @@ pub fn monthly_report(
         from_savings: round2(from_savings),
         on_credit: round2(on_credit),
         savings_contributions: round2(savings_contributions),
+        emergency_contributions: round2(emergency_contributions),
+        target_contributions: round2(target_contributions),
         savings_withdrawals: round2(savings_withdrawals),
         card_payments: round2(card_payments),
     }
